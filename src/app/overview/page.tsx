@@ -13,7 +13,6 @@ import { KpiGaugeChart } from "@/widgets/charts/kpi-gauge-chart";
 import { ProcessFlowChart } from "@/widgets/charts/process-flow-chart";
 import { TrendLineChart } from "@/widgets/charts/trend-line-chart";
 import { DowntimeParetoChart } from "@/widgets/charts/downtime-pareto-chart";
-import { ZoneHeatmapChart } from "@/widgets/charts/zone-heatmap-chart";
 import { QualityDonutChart } from "@/widgets/charts/quality-donut-chart";
 
 type TrendRange = "5m" | "15m" | "60m";
@@ -48,11 +47,16 @@ export default function OverviewPage() {
           <Panel
             compact
             fill
-            title={t("Zone Load Heatmap", "Нагрузка зон")}
+            title={t("Live Line Flow", "Динамика линии")}
             className="col-span-10 flex flex-col"
           >
-            <div className="h-full min-h-0">
-              <ZoneHeatmapChart heatmapData={data.heatmapData} height="100%" />
+            <div className="flex h-full min-h-0 flex-col">
+              <ProcessFlowChart
+                nodes={data.processFlow}
+                zoneLoad={data.zoneLoad}
+                variant="conveyor"
+                fill
+              />
             </div>
           </Panel>
         </div>
@@ -102,7 +106,7 @@ export default function OverviewPage() {
           </Panel>
         </div>
 
-        {/* Строка 3: OEE + heatmap + качество */}
+        {/* Строка 3: OEE + поток + качество */}
         <div className="grid min-h-0 grid-cols-12 gap-2">
           <Panel
             compact

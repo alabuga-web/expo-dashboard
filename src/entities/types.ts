@@ -110,7 +110,6 @@ export interface OverviewPayload {
     rejectRate: TrendPoint[];
   };
   zoneLoad: { zoneId: string; load: number }[];
-  heatmapData: number[][];
   processFlow: ProcessFlowNode[];
   alarms: Alarm[];
 }

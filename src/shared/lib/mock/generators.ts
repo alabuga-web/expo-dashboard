@@ -56,22 +56,6 @@ export function generateZoneLoad(scenario: ScenarioConfig): { zoneId: string; lo
   });
 }
 
-export function generateHeatmapData(scenario: ScenarioConfig): number[][] {
-  const zones = 6;
-  const buckets = 12;
-  const data: number[][] = [];
-  for (let z = 0; z < zones; z++) {
-    const row: number[] = [];
-    for (let b = 0; b < buckets; b++) {
-      let val = 0.5 + Math.random() * 0.4;
-      if (`Z0${z + 1}` === scenario.bottleneckZone) val = 0.75 + Math.random() * 0.25;
-      row.push(+val.toFixed(2));
-    }
-    data.push(row);
-  }
-  return data;
-}
-
 export function generateAlarms(scenario: ScenarioConfig): Alarm[] {
   const now = new Date();
   const alarms: Alarm[] = [];

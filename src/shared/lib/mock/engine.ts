@@ -11,7 +11,6 @@ import {
   generateAlarms,
   generateDowntimeReasons,
   generateEvents,
-  generateHeatmapData,
   generateTrend,
   generateZoneLoad,
 } from "./generators";
@@ -78,7 +77,6 @@ export function buildOverviewPayload(): OverviewPayload {
       rejectRate: generateTrend(15, (1 - kpi.quality) * 100, 0.3, scenario, "rejectRate"),
     },
     zoneLoad: generateZoneLoad(scenario),
-    heatmapData: generateHeatmapData(scenario),
     processFlow: buildProcessFlow(scenario),
     alarms,
   };
