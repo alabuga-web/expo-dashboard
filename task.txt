@@ -1,0 +1,579 @@
+Техническое задание: dashboard-система для Factory I/O-стендов на Next.js + ECharts
+Назначение документа
+Документ фиксирует финальные требования к разработке выставочной dashboard-системы для международной экспозиции с демонстрацией Factory I/O-линии по производству кубиков. Система должна совмещать зрелищную подачу для посетителей, high-performance HMI-подход для промышленной логики и современную web-архитектуру на Next.js с визуализациями на Apache ECharts.
+
+Цели проекта
+Основная цель — создать набор экранов для физических стендов, которые за 5–15 секунд объясняют, что происходит на линии: работает ли производство, сколько кубиков выпускается, где узкое место, есть ли тревога и как меняется ситуация во времени.
+
+Система должна быть одновременно понятной для международной выставочной аудитории, наглядной для демонстраторов и достаточно глубокой для инженерной диагностики. Для этого архитектура экранов строится по иерархии overview → area → detail → diagnostics, что соответствует лучшим практикам high-performance HMI.
+
+Контекст эксплуатации
+Dashboard-система предназначена для больших экранов на выставочных стендах, поэтому интерфейс должен учитывать дистанцию просмотра, высокий уровень фонового шума, краткое время внимания посетителя и необходимость считывания ключевых показателей с первого взгляда.
+
+В основе демонстрации — линия Factory I/O, в которой используются сенсоры, конвейеры, исполнительные механизмы, накопители, логика маршрутизации и сценарии отказов. Control I/O и Factory I/O работают с входами, выходами и внутренними сигналами, что позволяет строить как операторские, так и диагностические экраны поверх теговой модели данных.
+
+Принципы визуальной концепции
+Интерфейс должен быть зрелищным, но не декоративно-перегруженным. ISA рекомендует использовать нейтральные фоны, ограниченную палитру и выделять цветом отклонения, а не оформительские элементы, поскольку это повышает ситуационную осведомлённость оператора.
+
+Для экспозиции это означает следующую стилистику:
+
+базовая тема — тёмный графит, холодный серый, глубокий сине-циановый акцент;
+
+основные KPI — крупные, контрастные, видимые с 2–4 метров;
+
+цвет тревог — только для warning, alarm, blockage, reject, communication loss;
+
+анимация — только функциональная: поток кубиков, изменение состояния, плавные обновления чисел и графиков;
+
+псевдо-3D, кислотные градиенты и декоративные glow-эффекты запрещены, потому что high-performance HMI-практики считают их вредными для восприятия процесса.
+
+UX-принципы для международной выставки
+На каждом экране должна быть одна доминирующая история: либо текущее состояние линии, либо производительность, либо причина проблемы, либо диагностика узла. Лучшие практики dashboard-дизайна и large-screen wallboards рекомендуют ограничивать экран 3–5 ключевыми смысловыми блоками и не перегружать зрителя второстепенными показателями.
+
+Обязательные UX-принципы:
+
+один экран — одна основная мысль;
+
+не более 5 крупных информационных блоков на overview-экране;
+
+подписи короткие, международно-понятные, с приоритетом на английский интерфейс;
+
+числовые значения в кратком формате, с единым правилом отображения единиц;
+
+критическое состояние считывается без взаимодействия;
+
+drill-down до причины отклонения — не более 2–3 действий.
+
+Функциональная архитектура экранов
+1. Overview
+Главный экран должен давать мгновенное понимание статуса всей линии. High-performance HMI-подход рекомендует overview как агрегированный слой с KPI, тревогами и встроенными трендами, а не как перегруженную деталями инженерную схему.
+
+Состав overview-экрана:
+
+Line Status Banner: Running / Idle / Starved / Blocked / Alarm / Manual;
+
+Total Produced, Good Count, Reject Count;
+
+Throughput в cubes/min;
+
+OEE и декомпозиция Availability / Performance / Quality;
+
+mini-trends за последние 5, 15 и 60 минут;
+
+animated process flow по линии;
+
+Top downtime reasons / Pareto downtime;
+
+active alarms summary;
+
+bottleneck highlight по участку линии.
+
+2. Area Screens
+Экраны зон нужны для отдельных участков: подача, транспортировка, буфер, сортировка, контроль, выгрузка. На этом уровне пользователь должен видеть состояние оборудования, локальные счётчики, загрузку зоны и локальные отклонения.
+
+Каждый экран зоны должен включать:
+
+схему зоны;
+
+список оборудования;
+
+статус каждого устройства;
+
+local throughput;
+
+WIP/queue length;
+
+локальные тревоги;
+
+cycle time и rolling average;
+
+мини-тренды по зоне.
+
+3. Detail Screens
+Экраны деталей предназначены для отдельного узла: конвейер, сортировщик, накопитель, исполнительный механизм, контрольная точка. Здесь показываются raw values, interlocks, state machine и события, что соответствует рекомендованному уровню detail/diagnostic separation.
+
+Состав detail-экрана:
+
+паспорт оборудования;
+
+входные теги;
+
+выходные теги;
+
+внутренние состояния и режимы;
+
+state machine;
+
+interlocks и условия запуска;
+
+manual controls: Start, Stop, Reset, Auto/Manual, Step;
+
+журнал последних событий;
+
+локальный тренд ключевых параметров.
+
+4. Diagnostic Screens
+Диагностический слой нужен для разработчика, инженера и демонстратора. На нём отображаются теги, сигнал-таймлайны, логи тревог, качество связи и последовательность состояний, что соответствует лучшим практикам ISA для поддержки troubleshooting и MOC-подхода.
+
+Состав диагностических экранов:
+
+tag browser с поиском и фильтрацией;
+
+event log;
+
+alarm log;
+
+signal timeline;
+
+sequence trace;
+
+communication/heartbeat panel;
+
+data quality panel;
+
+replay mode для демонстрации сценариев.
+
+Сценарии демонстрации
+Система должна поддерживать управляемые сценарии выставочной демонстрации, потому что на стенде важно не только показать штатную работу, но и эффектно объяснить реакцию системы на отклонения.
+
+Обязательные сценарии:
+
+Normal production.
+
+Jam / blockage.
+
+Starvation / no input cubes.
+
+Sensor fault / stuck signal.
+
+Reject overflow.
+
+Manual mode / operator intervention.
+
+Speed-up demo x2/x4.
+
+Replay session mode.
+
+Для каждого сценария должны меняться:
+
+статус линии;
+
+KPI;
+
+подсветка проблемного участка;
+
+тренды до/после;
+
+тревоги и события;
+
+текстовое объяснение причины и эффекта для посетителя.
+
+KPI и аналитическая модель
+Производственная аналитика должна опираться на OEE и связанные производственные показатели. Практики OEE-dashboard рекомендуют использовать OEE как верхнеуровневый показатель с обязательной декомпозицией на Availability, Performance и Quality, а рядом выводить причины потерь и response metrics вроде MTTR.
+
+Обязательные KPI:
+
+Total Produced;
+
+Good Count;
+
+Reject Count;
+
+WIP Count;
+
+Throughput (cubes/min);
+
+Availability;
+
+Performance;
+
+Quality;
+
+OEE;
+
+Average Cycle Time;
+
+Max Cycle Time;
+
+Blockage Duration;
+
+Starvation Duration;
+
+MTTR;
+
+MTBF;
+
+Top Downtime Reasons;
+
+Alarm Rate;
+
+Queue Length by Zone.
+
+Формулы расчёта:
+
+Availability = Run Time / Planned Production Time.
+
+Performance = Ideal Cycle Time × Total Count / Run Time.
+
+Quality = Good Count / Total Count.
+
+OEE = Availability × Performance × Quality.
+
+Если часть KPI не приходит напрямую из PLC/Factory I/O, система должна вычислять derived metrics из событий прохождения кубиков, времени активации приводов и изменения состояний линии.
+
+Требования к графикам и визуализациям
+Поскольку проект ориентирован на международную экспозицию, графики должны быть не только функциональными, но и зрелищными. При этом эффективные dashboard-практики требуют сильной визуальной иерархии, единых шкал, коротких подписей и предсказуемого поведения графиков.
+
+Обязательные типы визуализаций:
+
+KPI tiles с animated counters;
+
+line/area charts для throughput и cycle time;
+
+radial gauges для OEE и статусов производительности;
+
+stacked bar charts для time distribution;
+
+Pareto chart для downtime reasons;
+
+heatmap для bottlenecks и нагрузки зон;
+
+event timeline;
+
+process flow / sankey-like visual strip;
+
+quality chart good vs reject;
+
+session comparison chart.
+
+Правила для графиков:
+
+одинаковые сущности имеют одинаковые цвета на всех экранах;
+
+предупреждения и аварии используют приоритетные цвета, а не декоративные оттенки;
+
+графики не должны требовать чтения мелких легенд;
+
+ключевые значения должны дублироваться крупным числом рядом с графиком;
+
+анимация только сглаживает обновления, а не скрывает информацию.
+
+Технологический стек
+Основной стек разработки:
+
+Next.js (App Router);
+
+TypeScript;
+
+Apache ECharts как основная библиотека визуализации;
+
+React-based design system для UI-компонентов;
+
+WebSocket или SSE для realtime;
+
+mock/live data adapters;
+
+серверная агрегация данных на стороне Next.js.
+
+Использование Next.js должно строиться по best practices для высоконагруженных dashboard-приложений: initial data fetching и агрегации — на сервере, интерактивные графики и realtime-подписки — в client components, тяжёлые chart-модули — через lazy loading и dynamic import.
+
+Архитектура приложения
+Архитектура должна быть модульной и разделять источники данных, доменную модель, слой вычисления KPI, UI-компоненты и композицию экранов. Такой подход уменьшает связность и упрощает разработку mock-режима и live-интеграции.
+
+Рекомендуемая структура:
+
+text
+src/
+  app/
+    (routes)/
+      overview/
+      areas/
+      detail/
+      diagnostics/
+      replay/
+  entities/
+    line/
+    zone/
+    equipment/
+    tag/
+    alarm/
+    event/
+    kpi/
+  features/
+    scenario-switcher/
+    realtime-connection/
+    alarm-monitor/
+    replay-controller/
+  widgets/
+    kpi-card/
+    oee-gauge/
+    process-flow/
+    trend-chart/
+    pareto-chart/
+    tag-table/
+    alarm-list/
+  shared/
+    api/
+    config/
+    lib/
+    ui/
+    styles/
+Data flow и режимы работы
+Система должна поддерживать два режима: live mode и mock/demo mode. Для выставки mock-режим критичен, поскольку позволяет воспроизводить эффектные и контролируемые сценарии даже при отсутствии реального подключения к PLC или Factory I/O.
+
+Режимы работы:
+
+Live Mode: данные приходят из Factory I/O / PLC / middleware;
+
+Mock Mode: генератор сценариев и управляемый playback;
+
+Replay Mode: воспроизведение исторической сессии;
+
+Failover Mode: graceful degradation при потере связи.
+
+Модель данных
+Система должна использовать унифицированную доменную модель, где все сущности связаны через line, zone, equipment и tag. Factory I/O и Control I/O опираются на входы и выходы, поэтому модель должна различать sensor tags, actuator tags и internal/calculated entities.
+
+Основные сущности
+Сущность	Назначение
+Line	Вся производственная линия
+Zone	Производственный участок
+Equipment	Единица оборудования
+Tag	Сигнал, параметр или состояние
+Alarm	Тревога или предупреждение
+Event	Событие процесса
+KpiSnapshot	Снимок KPI во времени
+ProductionRecord	Производственная запись
+Scenario	Сценарий демонстрации
+OperatorAction	Действие демонстратора или оператора
+Структура Tag
+ts
+export interface Tag {
+  id: string;
+  name: string;
+  path: string;
+  type: 'bool' | 'int' | 'float' | 'enum';
+  direction: 'input' | 'output' | 'internal' | 'calculated';
+  zoneId: string;
+  equipmentId?: string;
+  unit?: string;
+  value: boolean | number | string;
+  quality: 'good' | 'bad' | 'uncertain';
+  timestamp: string;
+  description?: string;
+}
+Соглашение по неймингу
+Для тегов рекомендуется использовать инженерный шаблон имени, масштабируемый на все зоны и устройства. Практики сообщества Factory I/O показывают удобство префиксов I_ для inputs, Q_ для outputs и зонального разбиения по Zxx.
+
+Примеры:
+
+I_Z01_Entry_PE
+
+I_Z02_Buffer_Full
+
+Q_Z01_Conv_Main_Run
+
+Q_Z03_Pusher_Extend
+
+M_Line_AutoMode
+
+C_GoodCubes_Total
+
+T_Z02_Blockage
+
+KPI_OEE_Current
+
+API-контракты
+Система должна предоставлять единый presentation-layer API для экранов, чтобы клиентский слой не собирал данные вручную из разрозненных источников. Для dashboard-проектов на Next.js это уменьшает сложность компонентов и позволяет централизовать агрегации.
+
+Примеры endpoint-структуры
+text
+GET /api/overview
+GET /api/areas
+GET /api/areas/:id
+GET /api/equipment/:id
+GET /api/tags?zone=Z01&type=input
+GET /api/alarms?active=true
+GET /api/events?from=...&to=...
+GET /api/kpi/current
+GET /api/kpi/history?range=15m
+GET /api/replay/sessions
+POST /api/scenario/start
+POST /api/scenario/stop
+Пример payload для overview
+json
+{
+  "lineStatus": "running",
+  "producedTotal": 1842,
+  "goodCount": 1798,
+  "rejectCount": 44,
+  "throughputPerMin": 32.4,
+  "oee": 0.87,
+  "availability": 0.92,
+  "performance": 0.89,
+  "quality": 0.98,
+  "topDowntimeReasons": [
+    { "code": "BLOCKAGE", "durationSec": 340 },
+    { "code": "SENSOR_FAULT", "durationSec": 125 }
+  ],
+  "activeAlarms": 1,
+  "bottleneckZone": "Z03",
+  "trend": {
+    "throughput": [],
+    "cycleTime": [],
+    "rejectRate": []
+  }
+}
+Требования к Apache ECharts
+Apache ECharts выбирается как основная библиотека визуализации, потому что она поддерживает gauge, heatmap, timeline, graph, rich animation и сложные композиции, полезные для выставочных dashboards на больших экранах.
+
+Требования к интеграции ECharts:
+
+каждый тяжёлый график загружается через dynamic import;
+
+темы и цветовые токены централизованы;
+
+есть reusable chart wrappers;
+
+resize и full-screen адаптация обязательны;
+
+realtime updates не должны полностью пересоздавать chart instance;
+
+tooltips должны быть читаемыми на touch-экранах;
+
+fallback для отсутствия данных обязателен.
+
+Рекомендуемый набор reusable chart-компонентов:
+
+KpiGaugeChart
+
+TrendLineChart
+
+ThroughputAreaChart
+
+DowntimeParetoChart
+
+ZoneHeatmapChart
+
+EventTimelineChart
+
+ProcessFlowChart
+
+QualityDonutChart
+
+SessionComparisonChart
+
+Нефункциональные требования
+Full-screen kiosk mode.
+
+Поддержка 16:9, 21:9 и 4K-экранов.
+
+Touch-friendly UI с крупными целями взаимодействия.
+
+Время первого meaningful render до 2 секунд на локальном стенде.
+
+Плавное обновление данных без заметного мерцания интерфейса.
+
+Graceful degradation при потере источника данных.
+
+Поддержка английского языка как основного интерфейсного языка, с возможностью переключения на русский.
+
+Ограничения и запреты
+Нельзя делать интерфейс как пёстрый набор карточек с одинаковым визуальным весом, потому что лучшие практики dashboard-дизайна и HMI-подхода требуют выраженной иерархии внимания.
+
+Запрещено:
+
+использовать радугу цветов для регулярных состояний;
+
+делать 3D-декор в ущерб читаемости;
+
+строить overview как техническую схему со всеми тегами сразу;
+
+применять долгие и мешающие анимации;
+
+использовать мелкие подписи и плотные легенды;
+
+показывать критические сигналы только по hover-событию.
+
+Этапы реализации
+Этап 1. Discovery и дизайн-система
+формализация сценариев стенда;
+
+карта экранов;
+
+визуальная система;
+
+набор KPI;
+
+data contracts;
+
+прототипы chart-компонентов.
+
+Этап 2. Core platform
+каркас Next.js App Router;
+
+дизайн-токены;
+
+mock API;
+
+live adapter abstraction;
+
+базовые layout-компоненты;
+
+chart wrappers для ECharts.
+
+Этап 3. Overview и Area layer
+сборка overview;
+
+area screens;
+
+process flow;
+
+KPI cards;
+
+OEE and trend visualizations;
+
+alarm summary.
+
+Этап 4. Detail и Diagnostics
+tag table;
+
+event/alarm log;
+
+timeline;
+
+state machine panel;
+
+replay mode;
+
+scenario controls.
+
+Этап 5. Exhibition hardening
+full-screen kiosk optimization;
+
+touch UX;
+
+localisation;
+
+resilience tests;
+
+performance optimization;
+
+visual QA на реальных стендах/дисплеях.
+
+Критерии приёмки
+Результат считается принятым, если выполняются следующие условия:
+
+посетитель считывает статус линии и выпуск кубиков за 5 секунд;
+
+overview-экран показывает KPI, тревоги и тренды без перегрузки;
+
+drill-down до проблемного участка выполняется максимум за 2–3 действия;
+
+OEE, Availability, Performance и Quality корректно рассчитываются и отображаются;
+
+есть live, mock и replay режимы;
+
+графики зрелищны, но сохраняют читаемость на больших экранах;
+
+приложение стабильно работает на Next.js в full-screen kiosk mode
