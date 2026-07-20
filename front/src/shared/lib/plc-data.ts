@@ -632,7 +632,7 @@ let cachedDbMtime = 0;
 
 function resolveDbPath(): string {
   if (process.env.PLC_DB_PATH) return path.resolve(process.env.PLC_DB_PATH);
-  return path.resolve(process.cwd(), "..", "ПЛК_OPC_SERVER", "plc_data.db");
+  return path.resolve(process.cwd(), "..", "back", "plc_data.db");
 }
 
 function plcApiBase(): string {

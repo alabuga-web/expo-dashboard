@@ -9,14 +9,14 @@ front/.env*
 front/*.tsbuildinfo
 front/next-env.d.ts
 
-# ПЛК_OPC_SERVER
-ПЛК_OPC_SERVER/__pycache__/
-ПЛК_OPC_SERVER/**/*.pyc
-ПЛК_OPC_SERVER/.env.dev
-ПЛК_OPC_SERVER/.env.prod
-ПЛК_OPC_SERVER/plc_data.db
-ПЛК_OPC_SERVER/plc_data.db-*
-ПЛК_OPC_SERVER/*.db.bak
-ПЛК_OPC_SERVER/token.txt
-ПЛК_OPC_SERVER/auth.json
-ПЛК_OPC_SERVER/cookies.txt
+# back
+back/__pycache__/
+back/**/*.pyc
+back/.env.dev
+back/.env.prod
+back/plc_data.db
+back/plc_data.db-*
+back/*.db.bak
+back/token.txt
+back/auth.json
+back/cookies.txt
