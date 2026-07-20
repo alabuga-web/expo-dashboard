@@ -886,12 +886,98 @@ export interface ProductionFlowNode {
   value?: string;
 }
 
+export interface ConveyorSegmentState {
+  id: string;
+  label: string;
+  active: boolean;
+  sensorActive: boolean;
+}
+
+export interface ConveyorState {
+  segmentIndex: number;
+  progress: number;
+  moving: boolean;
+  color: ProductColor | null;
+  segments: ConveyorSegmentState[];
+}
+
+const CONVEYOR_PIPELINE: Array<{
+  id: string;
+  label: string;
+  beltTags: string[];
+  sensorTags: string[];
+  numericSensors?: string[];
+}> = [
+  { id: "emit", label: "Выдача", beltTags: ["emitter_1_emit"], sensorTags: [] },
+  { id: "z01", label: "Вход", beltTags: ["belt_conveyor_1"], sensorTags: ["diffuse_sensor_1"] },
+  {
+    id: "z02",
+    label: "Линия",
+    beltTags: ["belt_conveyor_2", "belt_conveyor_3", "belt_conveyor_4"],
+    sensorTags: ["diffuse_sensor_3"],
+  },
+  {
+    id: "z03",
+    label: "Буфер",
+    beltTags: ["belt_conveyor_7", "belt_conveyor_8"],
+    sensorTags: ["diffuse_sensor_9"],
+  },
+  {
+    id: "vision",
+    label: "Камера",
+    beltTags: [],
+    sensorTags: [],
+    numericSensors: ["vision_sensor_1_value"],
+  },
+  {
+    id: "sort",
+    label: "Сортировка",
+    beltTags: ["fx3_belt_conveyor_3", "pivot_arm_sorter_11_belt", "pop_up_wheel_sorter_1_plus"],
+    sensorTags: ["diffuse_sensor_10", "fx3_diffuse_sensor_2"],
+  },
+  {
+    id: "storage",
+    label: "Склад",
+    beltTags: ["pop_up_wheel_sorter_1_left", "pop_up_wheel_sorter_1_right", "fx3_pivot_arm_sorter_4_belt"],
+    sensorTags: ["fx3_diffuse_sensor_8"],
+  },
+];
+
+function buildConveyorState(tags: Map<string, Tag>, color: ProductColor | null): ConveyorState {
+  const segments: ConveyorSegmentState[] = CONVEYOR_PIPELINE.map((segment) => ({
+    id: segment.id,
+    label: segment.label,
+    active: segment.beltTags.some((tag) => boolOf(tags, tag)),
+    sensorActive:
+      segment.sensorTags.some((tag) => boolOf(tags, tag)) ||
+      (segment.numericSensors?.some((tag) => numberOf(tags, tag) > 0) ?? false),
+  }));
+
+  let segmentIndex = 0;
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].active || segments[i].sensorActive) segmentIndex = i;
+  }
+
+  const current = segments[segmentIndex];
+  const localProgress = current.sensorActive ? 0.85 : current.active ? 0.55 : 0.2;
+  const progress = Math.min(1, (segmentIndex + localProgress) / segments.length);
+
+  return {
+    segmentIndex,
+    progress,
+    moving: segments.some((segment) => segment.active),
+    color,
+    segments,
+  };
+}
+
 export interface ProductionPayload {
   status: PlcStatus;
   produced: ColorCounts & { total: number };
   ratePerMin: number;
   warehouse: ColorCounts;
   flow: { nodes: ProductionFlowNode[] };
+  conveyor: ConveyorState;
   arm: {
     x: number;
     y: number;
@@ -910,9 +996,9 @@ export interface ProductionPayload {
   lastColor: ProductColor | null;
   recentColors: ProductColor[];
   trends: {
-    x: TrendPoint[];
-    sx: TrendPoint[];
-    z: TrendPoint[];
+    sensor: TrendPoint[];
+    belt: TrendPoint[];
+    vision: TrendPoint[];
   };
 }
 
@@ -1052,6 +1138,7 @@ export async function getProductionPayload(): Promise<ProductionPayload> {
         { id: "warehouse", label: "Склад", active: ["pop_up_wheel_sorter_1_left", "pop_up_wheel_sorter_1_right", "fx3_pivot_arm_sorter_4_belt"].some((name) => boolOf(tags, name)) },
       ],
     },
+    conveyor: buildConveyorState(tags, lastColor),
     arm: {
       x,
       y,
@@ -1070,9 +1157,9 @@ export async function getProductionPayload(): Promise<ProductionPayload> {
     lastColor,
     recentColors,
     trends: {
-      x: getTrend("fx5_pick_place_x_position"),
-      sx: getTrend("fx5_pick_place_x_setpoint"),
-      z: getTrend("fx5_pick_place_z_position"),
+      sensor: getTrend("diffuse_sensor_1"),
+      belt: getTrend("belt_conveyor_1"),
+      vision: getTrend("vision_sensor_1_value"),
     },
   };
 }
