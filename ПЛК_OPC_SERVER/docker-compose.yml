@@ -1,0 +1,100 @@
+services:
+  kafka:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 512M
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://kafka:9092,external://localhost:${KAFKA_EXTERNAL_PORT:-19092}
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-19092}:19092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        rpk topic create ${KAFKA_TOPIC:-plc.tag.events} -p 3 -r 1 --brokers kafka:9092 || true
+    restart: "no"
+
+  opc-simulator:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    ports:
+      - "${OPC_SIMULATOR_PORT:-4840}:4840"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',4840)); s.close()\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  opc-listener:
+    build:
+      context: .
+      dockerfile: Dockerfile.listener
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      opc-simulator:
+        condition: service_healthy
+        required: false
+    environment:
+      PLC_MODE: ${PLC_MODE:-dev}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-plc.tag.events}
+      LISTENER_SERVERS: ${LISTENER_SERVERS:-}
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-1.0}
+      PLC_OPC_ENDPOINT: ${PLC_OPC_ENDPOINT:-opc.tcp://192.168.0.1:4840}
+      OPC_NODESET: ${OPC_NODESET:-Выставка демо.PLC_2.OPCUA.xml}
+    command: ["python", "-m", "opc_listener.main", "--config", "config/servers.yaml"]
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      opc-listener:
+        condition: service_started
+    ports:
+      - "${UI_PORT:-8000}:8000"
+    environment:
+      PLC_MODE: ${PLC_MODE:-dev}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-plc.tag.events}
+      DATABASE_PATH: ${DATABASE_PATH:-/data/plc_data.db}
+      UI_PORT: ${UI_PORT:-8000}
+    volumes:
+      - plc_data:/data
+    restart: unless-stopped
+
+volumes:
+  plc_data:

@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements-backend.txt .
+RUN pip install --no-cache-dir -r requirements-backend.txt
+
+COPY shared/ shared/
+COPY opc_simulator/ opc_simulator/
+COPY config/ config/
+COPY *.xml .
+
+ENV PYTHONPATH=/app
+EXPOSE 4840
+
+CMD ["python", "-m", "opc_simulator.main", "--endpoint", "opc.tcp://0.0.0.0:4840"]

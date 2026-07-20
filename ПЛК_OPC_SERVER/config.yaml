@@ -1,0 +1,40 @@
+plc:
+  host: "192.168.0.1"   # реальный IP ПЛК (ping + порт 102 открыт)
+  port: 102          # стандартный порт S7 (ISO-on-TCP), не 502 как у Modbus
+  rack: 0
+  slot: 1            # S7-1200/1500: 1, S7-300: 2
+  timeout_sec: 3.0
+
+database:
+  enabled: true
+  path: "plc_data.db"
+
+poll:
+  continuous: true
+  interval_sec: 1.0
+
+# Сначала запусти: python plc_reader.py --probe
+# чтобы узнать, какие DB реально есть в ПЛК.
+#
+# area: db | inputs | outputs | merker
+# type: bool | int | dint | real | word
+signals:
+  # Пример DB — замени db/offset на реальные из TIA Portal
+  # - name: temperature
+  #   area: db
+  #   db: 1
+  #   offset: 0
+  #   type: real
+  #   unit: "°C"
+
+  - name: start_button
+    area: inputs
+    offset: 0
+    type: bool
+    bit: 0
+
+  - name: motor_running
+    area: outputs
+    offset: 0
+    type: bool
+    bit: 0

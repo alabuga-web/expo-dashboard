@@ -1,0 +1,17 @@
+web:
+  host: "192.168.0.1"     # IP веб-сервера ПЛК (из браузера)
+  use_https: true
+  verify_ssl: false       # self-signed сертификат ПЛК
+  user: "admin"           # пользователь из TIA Portal → Web server → User administration
+  password: "admin"            # пароль пользователя
+
+# Теги для PlcProgram.Read (имена как в TIA Portal)
+# DB: "\"MyDB\".Temperature"  или  "\"MyDB\".\"My Tag\""
+tags:
+  - "I0.0"
+  - "Q0.0"
+
+# Data Logs — скачивание CSV из /DataLogs (нужен File Browser Access)
+datalogs:
+  enabled: false
+  output_dir: "./datalogs"

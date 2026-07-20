@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PLC OPC Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>PLC OPC Dashboard</h1>
+    <div id="connection-status" class="badge offline">Disconnected</div>
+  </header>
+
+  <section id="servers-section">
+    <h2>Серверы</h2>
+    <div id="servers-grid" class="grid"></div>
+  </section>
+
+  <section id="tags-section">
+    <h2>Теги</h2>
+    <div class="filters">
+      <label>
+        Сервер
+        <select id="filter-server">
+          <option value="">Все</option>
+        </select>
+      </label>
+      <label>
+        Группа
+        <select id="filter-group">
+          <option value="">Все</option>
+          <option value="inputs">inputs</option>
+          <option value="outputs">outputs</option>
+          <option value="memory">memory</option>
+          <option value="plc">plc</option>
+        </select>
+      </label>
+      <label>
+        Поиск
+        <input type="search" id="filter-search" placeholder="имя тега...">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table id="tags-table">
+        <thead>
+          <tr>
+            <th>Сервер</th>
+            <th>Группа</th>
+            <th>Тег</th>
+            <th>Значение</th>
+            <th>Тип</th>
+            <th>Обновлено</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

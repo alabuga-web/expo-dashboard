@@ -1,0 +1,305 @@
+opc:
+  endpoint: "opc.tcp://192.168.0.1:4840"
+  timeout_sec: 5.0
+  user: ""
+  password: ""
+  # NodeSet экспортирован из TIA Portal (PLC_2, проект "Выставка демо")
+  nodeset: "Выставка демо.PLC_2.OPCUA.xml"
+
+database:
+  enabled: true
+  path: "plc_data.db"
+
+poll:
+  continuous: true
+  interval_sec: 1.0
+
+# Если nodes пустой — читаются группы из XML (см. groups)
+# Если nodes задан — используются только они
+groups:
+  - inputs
+  - outputs
+  - memory
+
+# Явный список (приоритет над groups). Эти теги покрывают один экран:
+# производство по цветам, сортировка/склад и манипулятор FX5.
+nodes:
+  - name: plc_operating_mode
+    node_id: 'ns=3;s=OperatingMode'
+    group: plc
+    type: SimaticOperatingState
+
+  - name: diffuse_sensor_1
+    node_id: 'ns=3;s="Diffuse Sensor 1"'
+    group: inputs
+    type: BOOL
+
+  - name: diffuse_sensor_3
+    node_id: 'ns=3;s="Diffuse Sensor 3"'
+    group: inputs
+    type: BOOL
+
+  - name: diffuse_sensor_9
+    node_id: 'ns=3;s="Diffuse Sensor 9"'
+    group: inputs
+    type: BOOL
+
+  - name: diffuse_sensor_10
+    node_id: 'ns=3;s="Diffuse Sensor 10"'
+    group: inputs
+    type: BOOL
+
+  - name: fx3_diffuse_sensor_2
+    node_id: 'ns=3;s="FX3 Diffuse Sensor 2"'
+    group: inputs
+    type: BOOL
+
+  - name: fx3_diffuse_sensor_8
+    node_id: 'ns=3;s="FX3 Diffuse Sensor 8"'
+    group: inputs
+    type: BOOL
+
+  - name: fx5_dis1
+    node_id: 'ns=3;s="FX5 DIS1"'
+    group: inputs
+    type: BOOL
+
+  - name: fx5_dis2
+    node_id: 'ns=3;s="FX5 DIS2"'
+    group: inputs
+    type: BOOL
+
+  - name: fx5_dis3
+    node_id: 'ns=3;s="FX5 DIS3"'
+    group: inputs
+    type: BOOL
+
+  - name: fx5_box_detected
+    node_id: 'ns=3;s="FX5 Pick & Place 1 (Box Detected)"'
+    group: inputs
+    type: BOOL
+
+  - name: belt_conveyor_1
+    node_id: 'ns=3;s="Belt Conveyor (2m) 1"'
+    group: outputs
+    type: BOOL
+
+  - name: belt_conveyor_2
+    node_id: 'ns=3;s="Belt Conveyor (2m) 2"'
+    group: outputs
+    type: BOOL
+
+  - name: belt_conveyor_3
+    node_id: 'ns=3;s="Belt Conveyor (2m) 3"'
+    group: outputs
+    type: BOOL
+
+  - name: belt_conveyor_4
+    node_id: 'ns=3;s="Belt Conveyor (2m) 4"'
+    group: outputs
+    type: BOOL
+
+  - name: belt_conveyor_7
+    node_id: 'ns=3;s="Belt Conveyor 7"'
+    group: outputs
+    type: BOOL
+
+  - name: belt_conveyor_8
+    node_id: 'ns=3;s="Belt Conveyor 8"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_3
+    node_id: 'ns=3;s="FX3 Belt Conveyor 3"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_4
+    node_id: 'ns=3;s="FX3 Belt Conveyor 4"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_5
+    node_id: 'ns=3;s="FX3 Belt Conveyor 5"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_6
+    node_id: 'ns=3;s="FX3 Belt Conveyor 6"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_7
+    node_id: 'ns=3;s="FX3 Belt Conveyor 7"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_belt_conveyor_8
+    node_id: 'ns=3;s="FX3 Belt Conveyor 8"'
+    group: outputs
+    type: BOOL
+
+  - name: emitter_1_emit
+    node_id: 'ns=3;s="Emitter 1 (Emit)"'
+    group: outputs
+    type: BOOL
+
+  - name: emitter_2_base
+    node_id: 'ns=3;s="Emitter 2 (Base)"'
+    group: outputs
+    type: DINT
+
+  - name: emitter_2_part
+    node_id: 'ns=3;s="Emitter 2 (Part)"'
+    group: outputs
+    type: DINT
+
+  - name: vision_sensor_1_value
+    node_id: 'ns=3;s="Vision Sensor 1 (Value)"'
+    group: inputs
+    type: DINT
+
+  - name: vision_sensor_2_value
+    node_id: 'ns=3;s="Vision Sensor 2 (Value)"'
+    group: inputs
+    type: DINT
+
+  - name: fx3_vision_sensor_3_value
+    node_id: 'ns=3;s="FX3 Vision Sensor 3 (Value)"'
+    group: inputs
+    type: DINT
+
+  - name: fx3_vision_sensor_4_value
+    node_id: 'ns=3;s="FX3 Vision Sensor 4 (Value)"'
+    group: inputs
+    type: DINT
+
+  - name: color
+    node_id: 'ns=3;s="COLOR"'
+    group: memory
+    type: INT
+
+  - name: pivot_arm_sorter_11_turn
+    node_id: 'ns=3;s="Pivot Arm Sorter 11 Tern"'
+    group: outputs
+    type: BOOL
+
+  - name: pivot_arm_sorter_22_turn
+    node_id: 'ns=3;s="Pivot Arm Sorter 22 Tern"'
+    group: outputs
+    type: BOOL
+
+  - name: pivot_arm_sorter_11_belt
+    node_id: 'ns=3;s="Pivot Arm Sorter 11 Belt (+)"'
+    group: outputs
+    type: BOOL
+
+  - name: pivot_arm_sorter_22_belt
+    node_id: 'ns=3;s="Pivot Arm Sorter 22 Belt (+)"'
+    group: outputs
+    type: BOOL
+
+  - name: pop_up_wheel_sorter_1_plus
+    node_id: 'ns=3;s="Pop Up Wheel Sorter 1 (+)"'
+    group: outputs
+    type: BOOL
+
+  - name: pop_up_wheel_sorter_1_left
+    node_id: 'ns=3;s="Pop Up Wheel Sorter 1 (Left)"'
+    group: outputs
+    type: BOOL
+
+  - name: pop_up_wheel_sorter_1_right
+    node_id: 'ns=3;s="Pop Up Wheel Sorter 1 (Right)"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_pivot_arm_sorter_4_turn
+    node_id: 'ns=3;s="FX3 Pivot Arm Sorter 4 Turn"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_pivot_arm_sorter_4_belt
+    node_id: 'ns=3;s="FX3 Pivot Arm Sorter 4 Belt (+)"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_pivot_arm_sorter_5_turn
+    node_id: 'ns=3;s="FX3 Pivot Arm Sorter 5 Turn"'
+    group: outputs
+    type: BOOL
+
+  - name: fx3_pivot_arm_sorter_5_turn_plus
+    node_id: 'ns=3;s="FX3 Pivot Arm Sorter 5 Turn +"'
+    group: outputs
+    type: BOOL
+
+  - name: factory_io_reset
+    node_id: 'ns=3;s="FACTORY I/O (Reset)"'
+    group: outputs
+    type: BOOL
+
+  - name: clock_0_5hz
+    node_id: 'ns=3;s="Clock_0.5Hz"'
+    group: memory
+    type: BOOL
+
+  - name: fx5_pick_place_x_position
+    node_id: 'ns=3;s="FX5 Pick & Place 1 X Position (V)"'
+    group: inputs
+    type: REAL
+
+  - name: fx5_pick_place_y_position
+    node_id: 'ns=3;s="FX5 Pick & Place 1 Y Position (V)"'
+    group: inputs
+    type: REAL
+
+  - name: fx5_pick_place_z_position
+    node_id: 'ns=3;s="FX5 Pick & Place 1 Z Position (V)"'
+    group: inputs
+    type: REAL
+
+  - name: fx5_pick_place_x_setpoint
+    node_id: 'ns=3;s="FX5 Pick & Place 1 X Set Point (V)"'
+    group: outputs
+    type: REAL
+
+  - name: fx5_pick_place_y_setpoint
+    node_id: 'ns=3;s="FX5 Pick & Place 1 Y Set Point(V)"'
+    group: outputs
+    type: REAL
+
+  - name: fx5_pick_place_z_setpoint
+    node_id: 'ns=3;s="FX5 Pick & Place 1 Z Set Point (V)"'
+    group: outputs
+    type: REAL
+
+  - name: fx5_pick_place_grab
+    node_id: 'ns=3;s="FX5 Pick & Place 1 (Grab)"'
+    group: outputs
+    type: BOOL
+
+  - name: fx5_conv1
+    node_id: 'ns=3;s="FX5 CONV1"'
+    group: outputs
+    type: BOOL
+
+  - name: fx5_curved_roller_conveyor_1_cw
+    node_id: 'ns=3;s="FX5 Curved Roller Conveyor 1 CW"'
+    group: outputs
+    type: BOOL
+
+  - name: fx5_roller_conveyor_2m_1
+    node_id: 'ns=3;s="FX5 Roller Conveyor (2m) 1"'
+    group: outputs
+    type: BOOL
+
+  - name: fx5_roller_conveyor_4m_1
+    node_id: 'ns=3;s="FX5 Roller Conveyor (4m) 1"'
+    group: outputs
+    type: BOOL
+
+  - name: fx5_roller_conveyor_6m_1
+    node_id: 'ns=3;s="FX5 Roller Conveyor (6m) 1"'
+    group: outputs
+    type: BOOL
