@@ -879,13 +879,6 @@ export interface ColorCounts {
   metal: number;
 }
 
-export interface ProductionFlowNode {
-  id: string;
-  label: string;
-  active: boolean;
-  value?: string;
-}
-
 export interface ConveyorSegmentState {
   id: string;
   label: string;
@@ -971,12 +964,22 @@ function buildConveyorState(tags: Map<string, Tag>, color: ProductColor | null):
   };
 }
 
+export interface ProductionDynamics {
+  cumulative: {
+    blue: TrendPoint[];
+    green: TrendPoint[];
+    metal: TrendPoint[];
+  };
+  throughput: TrendPoint[];
+  cycleTime: TrendPoint[];
+}
+
 export interface ProductionPayload {
   status: PlcStatus;
   produced: ColorCounts & { total: number };
   ratePerMin: number;
   warehouse: ColorCounts;
-  flow: { nodes: ProductionFlowNode[] };
+  dynamics: ProductionDynamics;
   conveyor: ConveyorState;
   arm: {
     x: number;
@@ -1038,7 +1041,11 @@ function historyRowsUntilCursor(): RawReading[] {
   return rows.slice(0, endIdx >= 0 ? endIdx + 1 : rows.length);
 }
 
-function countVisionEvents(rows: RawReading[]): { produced: ColorCounts & { total: number }; recentColors: ProductColor[]; lastVision: number | null } {
+function countVisionEvents(rows: RawReading[]): {
+  produced: ColorCounts & { total: number };
+  recentColors: ProductColor[];
+  lastVision: number | null;
+} {
   const counts: ColorCounts & { total: number } = { total: 0, blue: 0, green: 0, metal: 0 };
   const recentColors: ProductColor[] = [];
   let prev = 0;
@@ -1082,6 +1089,83 @@ function countWarehouseEvents(rows: RawReading[]): ColorCounts {
     }
   }
   return counts;
+}
+
+function collectVisionEvents(rows: RawReading[]): Array<{ ts: number; tsText: string; color: ProductColor }> {
+  const events: Array<{ ts: number; tsText: string; color: ProductColor }> = [];
+  let prev = 0;
+
+  for (const row of rows) {
+    if (row.tag_name !== "vision_sensor_1_value") continue;
+    const value = Number(parseValue(row.value_text, row.value_type));
+    if (!Number.isFinite(value)) continue;
+    if (prev === 0 && value > 0) {
+      const color = visionToColor(value);
+      if (color) {
+        const ts = new Date(row.ts).getTime();
+        if (Number.isFinite(ts)) events.push({ ts, tsText: row.ts, color });
+      }
+    }
+    prev = value;
+  }
+  return events;
+}
+
+function buildProductionDynamics(rows: RawReading[]): ProductionDynamics {
+  const events = collectVisionEvents(rows);
+  const stamps = [...new Set(rows.map((row) => row.ts))];
+  if (!stamps.length) {
+    return {
+      cumulative: { blue: [], green: [], metal: [] },
+      throughput: [],
+      cycleTime: [],
+    };
+  }
+
+  const maxPoints = 90;
+  const step = Math.max(1, Math.ceil(stamps.length / maxPoints));
+  const sampled = stamps.filter((_, i) => i % step === 0 || i === stamps.length - 1);
+
+  const blue: TrendPoint[] = [];
+  const green: TrendPoint[] = [];
+  const metal: TrendPoint[] = [];
+  const throughput: TrendPoint[] = [];
+  const cycleTime: TrendPoint[] = [];
+
+  let ei = 0;
+  let counts: ColorCounts = { blue: 0, green: 0, metal: 0 };
+  let lastCycle = 0;
+
+  for (const tsText of sampled) {
+    const t = new Date(tsText).getTime();
+    while (ei < events.length && events[ei].ts <= t) {
+      if (ei > 0) {
+        const dt = (events[ei].ts - events[ei - 1].ts) / 1000;
+        if (dt > 0 && dt < 120) lastCycle = Math.round(dt * 10) / 10;
+      }
+      counts[events[ei].color] += 1;
+      ei += 1;
+    }
+
+    blue.push({ timestamp: tsText, value: counts.blue });
+    green.push({ timestamp: tsText, value: counts.green });
+    metal.push({ timestamp: tsText, value: counts.metal });
+
+    const windowStart = t - 60_000;
+    let rate = 0;
+    for (const event of events) {
+      if (event.ts > t) break;
+      if (event.ts >= windowStart) rate += 1;
+    }
+    throughput.push({ timestamp: tsText, value: rate });
+    cycleTime.push({ timestamp: tsText, value: lastCycle });
+  }
+
+  return {
+    cumulative: { blue, green, metal },
+    throughput,
+    cycleTime,
+  };
 }
 
 function ratePerMinute(rows: RawReading[]): number {
@@ -1128,16 +1212,7 @@ export async function getProductionPayload(): Promise<ProductionPayload> {
     produced,
     ratePerMin: ratePerMinute(rows),
     warehouse,
-    flow: {
-      nodes: [
-        { id: "emit", label: "Выдача", active: boolOf(tags, "emitter_1_emit") },
-        { id: "conv", label: "Конвейеры", active: ["belt_conveyor_1", "belt_conveyor_2", "belt_conveyor_3", "belt_conveyor_4"].some((name) => boolOf(tags, name)) },
-        { id: "vision", label: "Камера", active: numberOf(tags, "vision_sensor_1_value") > 0, value: lastVision ? String(lastVision) : "0" },
-        { id: "sort", label: "Сортировка", active: ["pivot_arm_sorter_11_turn", "pivot_arm_sorter_22_turn", "pop_up_wheel_sorter_1_left", "pop_up_wheel_sorter_1_right", "fx3_pivot_arm_sorter_4_turn"].some((name) => boolOf(tags, name)) },
-        { id: "fx5", label: "FX5 рука", active: boolOf(tags, "fx5_pick_place_grab") || boolOf(tags, "fx5_box_detected") },
-        { id: "warehouse", label: "Склад", active: ["pop_up_wheel_sorter_1_left", "pop_up_wheel_sorter_1_right", "fx3_pivot_arm_sorter_4_belt"].some((name) => boolOf(tags, name)) },
-      ],
-    },
+    dynamics: buildProductionDynamics(rows),
     conveyor: buildConveyorState(tags, lastColor),
     arm: {
       x,
@@ -1160,6 +1235,152 @@ export async function getProductionPayload(): Promise<ProductionPayload> {
       sensor: getTrend("diffuse_sensor_1"),
       belt: getTrend("belt_conveyor_1"),
       vision: getTrend("vision_sensor_1_value"),
+    },
+  };
+}
+
+export interface ProcessArmPose {
+  x: number;
+  y: number;
+  z: number;
+  sx: number;
+  sy: number;
+  sz: number;
+  grab: boolean;
+  boxDetected: boolean;
+  error: number;
+}
+
+export interface ProcessPayload {
+  status: PlcStatus;
+  pose: ProcessArmPose;
+  arm: {
+    x: TrendPoint[];
+    y: TrendPoint[];
+    z: TrendPoint[];
+    sx: TrendPoint[];
+    sy: TrendPoint[];
+    sz: TrendPoint[];
+  };
+  linePass: {
+    diffuse1: TrendPoint[];
+    diffuse3: TrendPoint[];
+    diffuse9: TrendPoint[];
+    vision: TrendPoint[];
+    diffuse10: TrendPoint[];
+  };
+  sorting: {
+    left: TrendPoint[];
+    right: TrendPoint[];
+    metal: TrendPoint[];
+  };
+  pickCycle: {
+    error: TrendPoint[];
+    grab: TrendPoint[];
+    boxDetected: TrendPoint[];
+  };
+}
+
+function toBinaryTrend(points: TrendPoint[]): TrendPoint[] {
+  return points.map((point) => ({
+    timestamp: point.timestamp,
+    value: point.value > 0 ? 1 : 0,
+  }));
+}
+
+/** Сдвиг «дорожек» для цифровых импульсов — волна читается слева направо */
+function laneTrend(points: TrendPoint[], lane: number, gap = 1.35): TrendPoint[] {
+  return points.map((point) => ({
+    timestamp: point.timestamp,
+    value: lane * gap + (point.value > 0 ? 1 : 0),
+  }));
+}
+
+function getArmErrorTrend(limit = 120): TrendPoint[] {
+  const x = getTrend("fx5_pick_place_x_position", limit);
+  const y = getTrend("fx5_pick_place_y_position", limit);
+  const z = getTrend("fx5_pick_place_z_position", limit);
+  const sx = getTrend("fx5_pick_place_x_setpoint", limit);
+  const sy = getTrend("fx5_pick_place_y_setpoint", limit);
+  const sz = getTrend("fx5_pick_place_z_setpoint", limit);
+  const n = Math.min(x.length, y.length, z.length, sx.length, sy.length, sz.length);
+  const error: TrendPoint[] = [];
+  for (let i = 0; i < n; i++) {
+    const dx = x[i].value - sx[i].value;
+    const dy = y[i].value - sy[i].value;
+    const dz = z[i].value - sz[i].value;
+    error.push({
+      timestamp: x[i].timestamp,
+      value: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 1000) / 1000,
+    });
+  }
+  return error;
+}
+
+export async function getProcessPayload(): Promise<ProcessPayload> {
+  const snap = await getPlcSnapshot();
+  const status = snap?.status ?? (await getPlcStatus());
+  const tags = new Map((snap?.tags ?? []).map((tag) => [tag.name, tag]));
+  const limit = 120;
+
+  const x = numberOf(tags, "fx5_pick_place_x_position");
+  const y = numberOf(tags, "fx5_pick_place_y_position");
+  const z = numberOf(tags, "fx5_pick_place_z_position");
+  const sx = numberOf(tags, "fx5_pick_place_x_setpoint");
+  const sy = numberOf(tags, "fx5_pick_place_y_setpoint");
+  const sz = numberOf(tags, "fx5_pick_place_z_setpoint");
+  const error = Math.sqrt((x - sx) ** 2 + (y - sy) ** 2 + (z - sz) ** 2);
+
+  const diffuse1 = toBinaryTrend(getTrend("diffuse_sensor_1", limit));
+  const diffuse3 = toBinaryTrend(getTrend("diffuse_sensor_3", limit));
+  const diffuse9 = toBinaryTrend(getTrend("diffuse_sensor_9", limit));
+  const vision = toBinaryTrend(getTrend("vision_sensor_1_value", limit));
+  const diffuse10 = toBinaryTrend(getTrend("diffuse_sensor_10", limit));
+
+  const left = toBinaryTrend(getTrend("pop_up_wheel_sorter_1_left", limit));
+  const right = toBinaryTrend(getTrend("pop_up_wheel_sorter_1_right", limit));
+  const metal = toBinaryTrend(getTrend("fx3_pivot_arm_sorter_4_belt", limit));
+
+  const grab = toBinaryTrend(getTrend("fx5_pick_place_grab", limit));
+  const boxDetected = toBinaryTrend(getTrend("fx5_box_detected", limit));
+
+  return {
+    status,
+    pose: {
+      x,
+      y,
+      z,
+      sx,
+      sy,
+      sz,
+      grab: boolOf(tags, "fx5_pick_place_grab"),
+      boxDetected: boolOf(tags, "fx5_box_detected"),
+      error,
+    },
+    arm: {
+      x: getTrend("fx5_pick_place_x_position", limit),
+      y: getTrend("fx5_pick_place_y_position", limit),
+      z: getTrend("fx5_pick_place_z_position", limit),
+      sx: getTrend("fx5_pick_place_x_setpoint", limit),
+      sy: getTrend("fx5_pick_place_y_setpoint", limit),
+      sz: getTrend("fx5_pick_place_z_setpoint", limit),
+    },
+    linePass: {
+      diffuse1: laneTrend(diffuse1, 4),
+      diffuse3: laneTrend(diffuse3, 3),
+      diffuse9: laneTrend(diffuse9, 2),
+      vision: laneTrend(vision, 1),
+      diffuse10: laneTrend(diffuse10, 0),
+    },
+    sorting: {
+      left: laneTrend(left, 2),
+      right: laneTrend(right, 1),
+      metal: laneTrend(metal, 0),
+    },
+    pickCycle: {
+      error: getArmErrorTrend(limit),
+      grab: laneTrend(grab, 8),
+      boxDetected: laneTrend(boxDetected, 7),
     },
   };
 }

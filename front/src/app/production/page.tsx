@@ -231,23 +231,6 @@ function ConveyorView({ conveyor }: { conveyor: ConveyorState }) {
   );
 }
 
-function FlowLine({ nodes }: { nodes: ProductionPayload["flow"]["nodes"] }) {
-  return (
-    <div className="grid h-full grid-cols-6 gap-2">
-      {nodes.map((node, index) => (
-        <div key={node.id} className="relative flex min-w-0 flex-col justify-center rounded-xl border border-border bg-background p-3">
-          {index < nodes.length - 1 && (
-            <div className="pointer-events-none absolute left-[calc(100%-4px)] top-1/2 z-10 h-[2px] w-4 bg-border" />
-          )}
-          <div className={`mb-3 h-3 w-3 rounded-full ${node.active ? "bg-[#22D3EE] shadow-[0_0_18px_#22D3EE]" : "bg-[#4B5563]"}`} />
-          <div className="truncate text-sm font-semibold text-foreground">{node.label}</div>
-          <div className="mt-1 truncate font-mono text-xs text-muted">{node.value ?? (node.active ? "ON" : "OFF")}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ColorShare({ data }: { data: ProductionPayload["produced"] }) {
   const total = Math.max(data.total, 1);
   return (
@@ -341,6 +324,15 @@ export default function ProductionPage() {
         </div>
 
         <div className="grid min-h-0 grid-cols-12 gap-3">
+          <Panel compact fill title="Движение детали по линии" className="col-span-9">
+            <ConveyorView conveyor={data.conveyor} />
+          </Panel>
+          <Panel compact fill title="Заполнение склада" className="col-span-3">
+            <Warehouse data={data.warehouse} />
+          </Panel>
+        </div>
+
+        <div className="grid min-h-0 grid-cols-12 gap-3">
           <Panel compact fill title="Выпуск по цветам" className="col-span-3">
             <div className="grid h-full grid-rows-[1fr_auto] gap-4">
               <ColorShare data={data.produced} />
@@ -350,26 +342,28 @@ export default function ProductionPage() {
               </div>
             </div>
           </Panel>
-          <Panel compact fill title="Процесс линии" className="col-span-6">
-            <FlowLine nodes={data.flow.nodes} />
-          </Panel>
-          <Panel compact fill title="Заполнение склада" className="col-span-3">
-            <Warehouse data={data.warehouse} />
-          </Panel>
-        </div>
-
-        <div className="grid min-h-0 grid-cols-12 gap-3">
-          <Panel compact fill title="Движение детали по линии" className="col-span-7">
-            <ConveyorView conveyor={data.conveyor} />
-          </Panel>
-          <Panel compact fill title="Тренды линии: датчик / конвейер / vision" className="col-span-5">
+          <Panel compact fill title="Накопительный выпуск" className="col-span-5">
             <TrendLineChart
               compact
+              area
+              stack
+              step
               height="100%"
               series={[
-                { name: "Датчик входа", data: data.trends.sensor, color: "#22D3EE" },
-                { name: "Конвейер 1", data: data.trends.belt, color: "#F59E0B" },
-                { name: "Vision", data: data.trends.vision, color: "#A78BFA" },
+                { name: "Синие", data: data.dynamics.cumulative.blue, color: "#2563EB" },
+                { name: "Зелёные", data: data.dynamics.cumulative.green, color: "#10B981" },
+                { name: "Серые", data: data.dynamics.cumulative.metal, color: "#94A3B8" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title="Скорость выпуска и цикл" className="col-span-4">
+            <TrendLineChart
+              compact
+              area
+              height="100%"
+              series={[
+                { name: "Шт/мин (окно 60с)", data: data.dynamics.throughput, color: "#22D3EE" },
+                { name: "Цикл, с", data: data.dynamics.cycleTime, color: "#F59E0B" },
               ]}
             />
           </Panel>

@@ -10,6 +10,7 @@ import { LiveClock } from "./live-clock";
 
 const navItems = [
   { href: "/production", label: { en: "Production", ru: "Производство" }, icon: "◫", match: "/production" },
+  { href: "/process", label: { en: "Processes", ru: "Процессы" }, icon: "⌁", match: "/process" },
 ];
 
 interface DashboardShellProps {
