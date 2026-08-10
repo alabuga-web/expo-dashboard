@@ -1,11 +1,48 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import ReactEChartsCore from "echarts-for-react/lib/core";
+import * as echarts from "echarts/core";
+import { BarChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import { DashboardShell } from "@/shared/ui/dashboard-shell";
 import { Panel } from "@/shared/ui/panel";
 import { usePolling } from "@/shared/lib/use-polling";
+import { useLocale } from "@/features/locale-toggle/locale-context";
+import { colors, chartColors } from "@/shared/config/theme";
+import { formatDuration, formatTime } from "@/shared/lib/formatters";
+import { registerEchartsTheme } from "@/shared/lib/echarts-theme";
 import { TrendLineChart } from "@/widgets/charts/trend-line-chart";
-import type { ProcessArmPose, ProcessPayload } from "@/shared/lib/plc-data";
+import { ChartContainer } from "@/widgets/charts/chart-container";
+import { EventTimelineChart } from "@/widgets/charts/event-timeline-chart";
+import { KpiGaugeChart } from "@/widgets/charts/kpi-gauge-chart";
+import type { ProcessPayload } from "@/shared/lib/plc-data";
+
+echarts.use([LineChart, ScatterChart, BarChart, HeatmapChart, GridComponent, TooltipComponent, LegendComponent, VisualMapComponent, CanvasRenderer]);
+
+interface AdvancedChartProps {
+  option: object;
+  height?: number | string;
+  empty?: boolean;
+}
+
+function AdvancedChart({ option, height = "100%", empty = false }: AdvancedChartProps) {
+  registerEchartsTheme();
+  const fill = height === "100%";
+  return (
+    <ChartContainer height={height} fill={fill} empty={empty}>
+      <ReactEChartsCore
+        echarts={echarts}
+        option={option}
+        theme="factoryHmi"
+        style={{ height: "100%", width: "100%" }}
+        opts={{ renderer: "canvas" }}
+        notMerge={false}
+        lazyUpdate
+      />
+    </ChartContainer>
+  );
+}
 
 function StatusPill({ active, label }: { active: boolean; label: string }) {
   return (
@@ -16,426 +53,538 @@ function StatusPill({ active, label }: { active: boolean; label: string }) {
   );
 }
 
-const VOLT_MAX = 10;
-const L1 = 95;
-const L2 = 78;
-const ARM_ORANGE = "#EA580C";
-const ARM_DARK = "#1F2937";
-const ARM_STEEL = "#9CA3AF";
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-muted">{children}</div>;
 }
 
-function clamp01(value: number) {
-  return clamp(value, 0, 1);
-}
-
-/** IK для 2-звенной руки в плоскости XY + высота Z */
-function solveArm(xV: number, yV: number, zV: number) {
-  const px = (clamp01(xV / VOLT_MAX) * 2 - 1) * (L1 + L2 - 8);
-  const pz = (clamp01(yV / VOLT_MAX) * 2 - 1) * (L1 + L2 - 8);
-  const reach = Math.hypot(px, pz);
-  const maxR = L1 + L2 - 4;
-  const minR = Math.abs(L1 - L2) + 8;
-  const r = clamp(reach, minR, maxR);
-  const scale = reach > 0.001 ? r / reach : 1;
-  const tx = px * scale;
-  const tz = pz * scale;
-
-  const cosElbow = clamp((L1 * L1 + L2 * L2 - r * r) / (2 * L1 * L2), -1, 1);
-  const elbow = Math.PI - Math.acos(cosElbow);
-  const cosShoulder = clamp((L1 * L1 + r * r - L2 * L2) / (2 * L1 * r), -1, 1);
-  const shoulderOffset = Math.acos(cosShoulder);
-  const base = Math.atan2(tz, tx);
-  const shoulder = base + shoulderOffset;
-  const zDown = clamp01(zV / VOLT_MAX) * 70;
-
-  return {
-    baseDeg: (base * 180) / Math.PI,
-    shoulderDeg: (shoulder * 180) / Math.PI - (base * 180) / Math.PI,
-    elbowDeg: (elbow * 180) / Math.PI,
-    zDown,
-    tipX: tx,
-    tipZ: tz,
-  };
-}
-
-/**
- * Робот-рука (SCARA/articulated look) по XYZ PLC + вращение сцены мышью.
- * TCP следует за координатами через упрощённую IK.
- */
-function Fx5RobotArm3D({ pose }: { pose: ProcessArmPose }) {
-  const targetRef = useRef(pose);
-  const displayRef = useRef({ ...pose });
-  const worldRef = useRef<HTMLDivElement | null>(null);
-  const baseYawRef = useRef<HTMLDivElement | null>(null);
-  const shoulderRef = useRef<HTMLDivElement | null>(null);
-  const elbowRef = useRef<HTMLDivElement | null>(null);
-  const zRef = useRef<HTMLDivElement | null>(null);
-  const suctionRef = useRef<HTMLDivElement | null>(null);
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const ghostRef = useRef<HTMLDivElement | null>(null);
-  const readoutRef = useRef<HTMLDivElement | null>(null);
-  const viewRef = useRef({ rotX: 58, rotZ: -25 });
-  const dragRef = useRef<{ active: boolean; x: number; y: number; rotX: number; rotZ: number } | null>(null);
-
-  useEffect(() => {
-    targetRef.current = pose;
-  }, [pose]);
-
-  useEffect(() => {
-    let frame = 0;
-    let last = performance.now();
-
-    const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const target = targetRef.current;
-      const cur = displayRef.current;
-      const k = Math.min(1, 9 * dt);
-
-      cur.x += (target.x - cur.x) * k;
-      cur.y += (target.y - cur.y) * k;
-      cur.z += (target.z - cur.z) * k;
-      cur.sx += (target.sx - cur.sx) * k;
-      cur.sy += (target.sy - cur.sy) * k;
-      cur.sz += (target.sz - cur.sz) * k;
-      cur.error += (target.error - cur.error) * k;
-      cur.grab = target.grab;
-      cur.boxDetected = target.boxDetected;
-
-      const ik = solveArm(cur.x, cur.y, cur.z);
-      const ghost = solveArm(cur.sx, cur.sy, cur.sz);
-
-      if (worldRef.current) {
-        const { rotX, rotZ } = viewRef.current;
-        worldRef.current.style.transform = `rotateX(${rotX}deg) rotateZ(${rotZ}deg)`;
-      }
-      if (baseYawRef.current) {
-        baseYawRef.current.style.transform = `rotateY(${ik.baseDeg}deg)`;
-      }
-      if (shoulderRef.current) {
-        shoulderRef.current.style.transform = `translate3d(0, -72px, 0) rotateZ(${-ik.shoulderDeg}deg)`;
-      }
-      if (elbowRef.current) {
-        elbowRef.current.style.transform = `translate3d(${L1}px, 0, 0) rotateZ(${-ik.elbowDeg}deg)`;
-      }
-      if (zRef.current) {
-        zRef.current.style.transform = `translate3d(${L2}px, ${ik.zDown}px, 0)`;
-      }
-      if (ghostRef.current) {
-        ghostRef.current.style.transform = `translate3d(${ghost.tipX}px, ${ghost.zDown}px, ${ghost.tipZ}px)`;
-      }
-      if (suctionRef.current) {
-        suctionRef.current.style.background = cur.grab ? "#22D3EE" : "#E5E7EB";
-        suctionRef.current.style.boxShadow = cur.grab ? "0 0 18px #22D3EEAA" : "none";
-      }
-      if (boxRef.current) {
-        boxRef.current.style.opacity = cur.grab && cur.boxDetected ? "1" : "0";
-      }
-      if (readoutRef.current) {
-        readoutRef.current.textContent = `X ${cur.x.toFixed(2)} / Y ${cur.y.toFixed(2)} / Z ${cur.z.toFixed(2)} · err ${cur.error.toFixed(2)} · ${cur.grab ? "GRAB" : "IDLE"}${cur.boxDetected ? " · BOX" : ""}`;
-      }
-
-      frame = requestAnimationFrame(tick);
-    };
-
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = {
-      active: true,
-      x: e.clientX,
-      y: e.clientY,
-      rotX: viewRef.current.rotX,
-      rotZ: viewRef.current.rotZ,
-    };
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag?.active) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    viewRef.current.rotZ = drag.rotZ + dx * 0.45;
-    viewRef.current.rotX = clamp(drag.rotX - dy * 0.35, 25, 75);
-  };
-
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current) dragRef.current.active = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
-  };
-
+function PoseChip({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
-    <div className="relative grid h-full min-h-0 grid-rows-[1fr_auto] overflow-hidden rounded-xl border border-border bg-[#0D1117]">
-      <div
-        className="relative min-h-0 cursor-grab overflow-hidden active:cursor-grabbing"
-        style={{ perspective: "1200px", perspectiveOrigin: "50% 35%", touchAction: "none" }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        <div className="pointer-events-none absolute right-2 top-2 z-10 rounded bg-black/40 px-2 py-1 text-[10px] text-muted">
-          тяни мышью — вращение
-        </div>
-
-        <div
-          className="absolute left-1/2 top-[72%] h-0 w-0"
-          style={{ transformStyle: "preserve-3d" }}
-        >
-          <div ref={worldRef} style={{ transformStyle: "preserve-3d", transform: "rotateX(58deg) rotateZ(-25deg)" }}>
-            {/* Пол */}
-            <div
-              className="absolute border border-[#30363D] bg-[#161B22]"
-              style={{
-                width: 320,
-                height: 320,
-                transform: "translate3d(-160px, 0, -160px) rotateX(90deg)",
-                transformOrigin: "top left",
-                backgroundImage:
-                  "linear-gradient(#21262D 1px, transparent 1px), linear-gradient(90deg, #21262D 1px, transparent 1px)",
-                backgroundSize: "32px 32px",
-              }}
-            />
-
-            {/* Призрак уставки TCP */}
-            <div ref={ghostRef} className="absolute" style={{ transformStyle: "preserve-3d" }}>
-              <div
-                className="absolute rounded-full border-2 border-dashed border-[#F59E0B]"
-                style={{
-                  width: 28,
-                  height: 28,
-                  transform: "translate3d(-14px, -14px, 0)",
-                  background: "rgba(245, 158, 11, 0.15)",
-                }}
-              />
-            </div>
-
-            {/* Пьедестал */}
-            <div
-              className="absolute rounded-md"
-              style={{
-                width: 64,
-                height: 28,
-                background: ARM_DARK,
-                transform: "translate3d(-32px, -28px, -32px)",
-              }}
-            />
-            <div
-              className="absolute rounded-full"
-              style={{
-                width: 48,
-                height: 18,
-                background: "#374151",
-                transform: "translate3d(-24px, -44px, -24px)",
-              }}
-            />
-
-            {/* База (yaw) */}
-            <div
-              ref={baseYawRef}
-              className="absolute"
-              style={{ transformStyle: "preserve-3d", transformOrigin: "0 0 0" }}
-            >
-              <div
-                className="absolute rounded-md"
-                style={{
-                  width: 36,
-                  height: 42,
-                  background: ARM_ORANGE,
-                  transform: "translate3d(-18px, -86px, -18px)",
-                  boxShadow: "inset -4px 0 0 #9A341255",
-                }}
-              />
-
-              {/* Плечо */}
-              <div
-                ref={shoulderRef}
-                className="absolute"
-                style={{
-                  transformStyle: "preserve-3d",
-                  transformOrigin: "0px 0px 0px",
-                  transform: "translate3d(0, -72px, 0)",
-                }}
-              >
-                <div
-                  className="absolute rounded-sm"
-                  style={{
-                    width: L1,
-                    height: 22,
-                    background: `linear-gradient(180deg, ${ARM_ORANGE}, #C2410C)`,
-                    transform: "translate3d(0, -11px, -11px)",
-                    boxShadow: "0 0 12px #EA580C44",
-                  }}
-                />
-                <div
-                  className="absolute rounded-full"
-                  style={{
-                    width: 26,
-                    height: 26,
-                    background: ARM_STEEL,
-                    transform: "translate3d(-8px, -13px, -13px)",
-                  }}
-                />
-
-                {/* Локоть + предплечье */}
-                <div
-                  ref={elbowRef}
-                  className="absolute"
-                  style={{ transformStyle: "preserve-3d", transformOrigin: "0 0 0" }}
-                >
-                  <div
-                    className="absolute rounded-full"
-                    style={{
-                      width: 22,
-                      height: 22,
-                      background: ARM_STEEL,
-                      transform: "translate3d(-11px, -11px, -11px)",
-                    }}
-                  />
-                  <div
-                    className="absolute rounded-sm"
-                    style={{
-                      width: L2,
-                      height: 18,
-                      background: `linear-gradient(180deg, #FB923C, ${ARM_ORANGE})`,
-                      transform: "translate3d(0, -9px, -9px)",
-                    }}
-                  />
-
-                  {/* Кисть + Z + захват */}
-                  <div
-                    ref={zRef}
-                    className="absolute"
-                    style={{ transformStyle: "preserve-3d", transformOrigin: "0 0 0" }}
-                  >
-                    <div
-                      className="absolute rounded-sm"
-                      style={{
-                        width: 14,
-                        height: 56,
-                        background: `linear-gradient(90deg, #6B7280, ${ARM_STEEL}, #6B7280)`,
-                        transform: "translate3d(-7px, 0, -7px)",
-                      }}
-                    />
-                    <div
-                      className="absolute rounded-sm bg-[#111827]"
-                      style={{ width: 24, height: 12, transform: "translate3d(-12px, 48px, -8px)" }}
-                    />
-                    <div
-                      ref={suctionRef}
-                      className="absolute rounded-full"
-                      style={{
-                        width: 20,
-                        height: 8,
-                        background: "#E5E7EB",
-                        transform: "translate3d(-10px, 58px, -6px) rotateX(65deg)",
-                      }}
-                    />
-                    <div
-                      ref={boxRef}
-                      className="absolute rounded-sm bg-[#C4A574]"
-                      style={{
-                        width: 26,
-                        height: 16,
-                        opacity: 0,
-                        transform: "translate3d(-13px, 64px, -10px)",
-                        boxShadow: "0 0 10px #C4A57466",
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-[10px] text-muted">
-        <div ref={readoutRef} className="truncate font-mono text-foreground" />
-        <div className="shrink-0">рука · пунктир = уставка · drag = обзор</div>
+    <div className="rounded-lg border border-border bg-background px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
+      <div className="mt-0.5 font-mono text-sm text-foreground">
+        {value}
+        {unit ? <span className="ml-1 text-xs text-muted">{unit}</span> : null}
       </div>
     </div>
   );
 }
 
+function baseGrid(left = 42) {
+  return { top: 34, right: 14, bottom: 32, left };
+}
+
 export default function ProcessPage() {
+  const { t, locale } = useLocale();
   const { data, loading } = usePolling<ProcessPayload>("/api/process", 1000);
 
   if (loading || !data) {
     return (
-      <DashboardShell kiosk breadcrumbs={[{ label: "Процессы" }]}>
-        <div className="flex h-full items-center justify-center text-muted">Загрузка процессов линии...</div>
+      <DashboardShell breadcrumbs={[{ label: t("Processes", "Процессы") }]}>
+        <div className="flex h-full items-center justify-center text-muted">
+          {t("Loading line processes...", "Загрузка процессов линии...")}
+        </div>
       </DashboardShell>
     );
   }
 
+  const { pose, arm, linePass, sorting, pickCycle, analytics } = data;
+
+  const passSeries = [
+    { name: t("Entry DS1", "Вход DS1"), data: linePass.diffuse1, color: "#22D3EE" },
+    { name: t("Line DS3", "Линия DS3"), data: linePass.diffuse3, color: "#38BDF8" },
+    { name: t("Buffer DS9", "Буфер DS9"), data: linePass.diffuse9, color: "#A78BFA" },
+    { name: "Vision", data: linePass.vision, color: "#F472B6" },
+    { name: t("Sort DS10", "Сорт. DS10"), data: linePass.diffuse10, color: "#F59E0B" },
+  ];
+
+  const sortingSeries = [
+    { name: t("Blue ← left", "Синие ← left"), data: sorting.left, color: "#2563EB" },
+    { name: t("Green → right", "Зелёные → right"), data: sorting.right, color: "#10B981" },
+    { name: t("Metal", "Серые metal"), data: sorting.metal, color: "#94A3B8" },
+  ];
+
+  const pickSeries = [
+    { name: t("Pose error", "Ошибка поз."), data: pickCycle.error, color: "#F43F5E" },
+    { name: "Box detected", data: pickCycle.boxDetected, color: "#A78BFA" },
+    { name: "Grab", data: pickCycle.grab, color: "#22D3EE" },
+  ];
+
+  const xyTrajectoryOption = {
+      animationDuration: 300,
+      grid: baseGrid(46),
+      tooltip: {
+        trigger: "axis",
+        formatter: (items: Array<{ data: number[]; seriesName: string }>) =>
+          items.map((item) => `${item.seriesName}: X ${item.data[0]?.toFixed?.(2)} / Y ${item.data[1]?.toFixed?.(2)}`).join("<br/>"),
+      },
+      legend: { top: 0, right: 0, textStyle: { color: colors.textMuted, fontSize: 10 } },
+      xAxis: { type: "value", name: "X", min: 0, max: 10, splitLine: { lineStyle: { color: colors.borderSubtle, type: "dashed" } } },
+      yAxis: { type: "value", name: "Y", min: 0, max: 10, splitLine: { lineStyle: { color: colors.borderSubtle, type: "dashed" } } },
+      series: [
+        {
+          name: t("TCP path", "Путь TCP"),
+          type: "line",
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2, color: "#22D3EE" },
+          data: analytics.xyPath.map((point) => [point.x, point.y]),
+        },
+        {
+          name: t("Current", "Текущая"),
+          type: "scatter",
+          symbolSize: 11,
+          itemStyle: { color: "#F59E0B" },
+          data: analytics.xyPath.length ? [[pose.x, pose.y]] : [],
+        },
+      ],
+    };
+
+  const setpointScatterOption = {
+      grid: baseGrid(46),
+      tooltip: { trigger: "item" },
+      legend: { top: 0, right: 0, textStyle: { color: colors.textMuted, fontSize: 10 } },
+      xAxis: { type: "value", name: t("Setpoint", "Уставка"), min: 0, max: 10 },
+      yAxis: { type: "value", name: t("Actual", "Факт"), min: 0, max: 10 },
+      series: [
+        {
+          name: "X",
+          type: "scatter",
+          symbolSize: 7,
+          itemStyle: { color: "#F43F5E" },
+          data: analytics.xyPath.map((point) => [point.sx, point.x, point.error]),
+        },
+        {
+          name: "Y",
+          type: "scatter",
+          symbolSize: 7,
+          itemStyle: { color: "#22D3EE" },
+          data: analytics.xyPath.map((point) => [point.sy, point.y, point.error]),
+        },
+        {
+          name: "Z",
+          type: "scatter",
+          symbolSize: 7,
+          itemStyle: { color: "#A78BFA" },
+          data: analytics.xyPath.map((point) => [point.sz, point.z, point.error]),
+        },
+        {
+          name: t("Ideal", "Идеал"),
+          type: "line",
+          symbol: "none",
+          lineStyle: { color: colors.border, type: "dashed" },
+          data: [
+            [0, 0],
+            [10, 10],
+          ],
+        },
+      ],
+    };
+
+  const histogramOption = {
+      grid: baseGrid(42),
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      xAxis: { type: "category", data: analytics.errorHistogram.map((bucket) => bucket.bucket) },
+      yAxis: { type: "value", minInterval: 1 },
+      series: [
+        {
+          name: t("Samples", "Замеры"),
+          type: "bar",
+          barWidth: "58%",
+          itemStyle: { color: "#F43F5E", borderRadius: [4, 4, 0, 0] },
+          data: analytics.errorHistogram.map((bucket) => bucket.count),
+        },
+      ],
+    };
+
+  const cycleBarOption = {
+      grid: baseGrid(44),
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      legend: { top: 0, right: 0, textStyle: { color: colors.textMuted, fontSize: 10 } },
+      xAxis: { type: "category", data: analytics.cycles.map((cycle) => formatTime(cycle.end)) },
+      yAxis: { type: "value", name: "sec" },
+      series: [
+        {
+          name: t("Box → Grab", "Box → Grab"),
+          type: "bar",
+          stack: "cycle",
+          itemStyle: { color: "#A78BFA", borderRadius: [3, 3, 0, 0] },
+          data: analytics.cycles.map((cycle) => cycle.grabDelaySec),
+        },
+        {
+          name: t("Hold", "Удержание"),
+          type: "bar",
+          stack: "cycle",
+          itemStyle: { color: "#22D3EE", borderRadius: [3, 3, 0, 0] },
+          data: analytics.cycles.map((cycle) => cycle.holdSec),
+        },
+      ],
+    };
+
+  const heatmapSensors = [...new Set(analytics.sensorHeatmap.map((point) => point.sensor))];
+  const heatmapBuckets = [...new Set(analytics.sensorHeatmap.map((point) => point.bucket))];
+  const heatmapOption = {
+      grid: { top: 28, right: 20, bottom: 48, left: 58 },
+      tooltip: {
+        formatter: (p: { data: [number, number, number] }) =>
+          `${heatmapSensors[p.data[1]]}<br/>${formatTime(heatmapBuckets[p.data[0]])}: ${p.data[2]}`,
+      },
+      xAxis: { type: "category", data: heatmapBuckets.map(formatTime), axisLabel: { rotate: 30, fontSize: 9 } },
+      yAxis: { type: "category", data: heatmapSensors, axisLabel: { fontSize: 10 } },
+      visualMap: {
+        min: 0,
+        max: Math.max(1, ...analytics.sensorHeatmap.map((point) => point.value)),
+        calculable: false,
+        orient: "horizontal",
+        left: "center",
+        bottom: 0,
+        textStyle: { color: colors.textMuted },
+        inRange: { color: [colors.panelHover, chartColors.primary, colors.warning] },
+      },
+      series: [
+        {
+          name: t("Activity", "Активность"),
+          type: "heatmap",
+          data: analytics.sensorHeatmap.map((point) => [heatmapBuckets.indexOf(point.bucket), heatmapSensors.indexOf(point.sensor), point.value]),
+        },
+      ],
+    };
+
+  const pulseCountOption = {
+      grid: { top: 24, right: 12, bottom: 40, left: 38 },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      xAxis: { type: "category", data: analytics.pulseCounts.map((item) => item.sensor), axisLabel: { rotate: 20, fontSize: 10 } },
+      yAxis: { type: "value", minInterval: 1 },
+      series: [
+        {
+          name: t("Rising edges", "Фронты"),
+          type: "bar",
+          itemStyle: { color: "#10B981", borderRadius: [4, 4, 0, 0] },
+          data: analytics.pulseCounts.map((item) => item.count),
+        },
+      ],
+    };
+
+  const correlationOption = {
+      grid: { top: 24, right: 12, bottom: 36, left: 42 },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      xAxis: {
+        type: "category",
+        data: [t("Box + Grab", "Box + Grab"), t("Box only", "Только Box"), t("Grab only", "Только Grab"), t("Idle", "Idle")],
+        axisLabel: { fontSize: 10 },
+      },
+      yAxis: { type: "value", minInterval: 1 },
+      series: [
+        {
+          name: t("Samples", "Замеры"),
+          type: "bar",
+          itemStyle: { color: "#6366F1", borderRadius: [4, 4, 0, 0] },
+          data: [
+            analytics.grabBoxCorrelation.matched,
+            analytics.grabBoxCorrelation.boxOnly,
+            analytics.grabBoxCorrelation.grabOnly,
+            analytics.grabBoxCorrelation.idle,
+          ],
+        },
+      ],
+    };
+
   return (
-    <DashboardShell kiosk breadcrumbs={[{ label: "Процессы линии (демо)" }]}>
-      <div className="grid h-full grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-3 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-panel px-4 py-2">
+    <DashboardShell breadcrumbs={[{ label: t("Line processes (demo)", "Процессы линии (демо)") }]}>
+      <div className="flex flex-col gap-3 pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-panel px-4 py-2">
           <div className="text-sm text-muted">
-            Живые процессы PLC: 3D рука FX5, проход по зонам, сортировка, цикл захвата
+            {t(
+              "All PLC trend variations: sensors, sorting, FX5, grab cycle",
+              "Все вариации трендов PLC: датчики, сортировка, FX5, цикл захвата",
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <StatusPill active={data.status.connected} label={data.status.source === "db-replay" ? "Replay БД" : "Live OPC"} />
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill
+              active={data.status.connected}
+              label={data.status.source === "db-replay" ? t("DB Replay", "Replay БД") : "Live OPC"}
+            />
             <StatusPill active={data.status.operatingMode === 8 || data.status.operatingMode === 9} label={`PLC ${data.status.operatingModeLabel}`} />
             <StatusPill active={data.status.heartbeatAlive} label="Heartbeat" />
+            <StatusPill active={pose.grab} label="Grab" />
+            <StatusPill active={pose.boxDetected} label="Box" />
           </div>
         </div>
 
-        <div className="grid min-h-0 grid-cols-12 gap-3">
-          <Panel compact fill title="FX5 — робот-рука (XYZ → IK)" className="col-span-6">
-            <div className="h-full min-h-0">
-              <Fx5RobotArm3D pose={data.pose} />
-            </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          <PoseChip label={t("X actual", "X факт")} value={pose.x.toFixed(2)} />
+          <PoseChip label={t("Y actual", "Y факт")} value={pose.y.toFixed(2)} />
+          <PoseChip label={t("Z actual", "Z факт")} value={pose.z.toFixed(2)} />
+          <PoseChip label={t("X setpoint", "X уставка")} value={pose.sx.toFixed(2)} />
+          <PoseChip label={t("Y setpoint", "Y уставка")} value={pose.sy.toFixed(2)} />
+          <PoseChip label={t("Z setpoint", "Z уставка")} value={pose.sz.toFixed(2)} />
+          <PoseChip label={t("Error", "Ошибка")} value={pose.error.toFixed(3)} />
+          <PoseChip label={t("Mode", "Режим")} value={pose.grab ? "GRAB" : "IDLE"} />
+        </div>
+
+        <SectionTitle>{t("New diagnostic charts", "Новые диагностические графики")}</SectionTitle>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("XY TCP trajectory", "XY-траектория TCP")} subtitle={t("Shows the real TCP movement path in XY; the orange point is the current position.", "Показывает реальный путь TCP в плоскости XY; оранжевая точка — текущая позиция.")} className="col-span-6 h-[320px]">
+            <AdvancedChart option={xyTrajectoryOption} empty={!analytics.xyPath.length} />
           </Panel>
-          <Panel compact fill title="Проход по линии (импульсы датчиков)" className="col-span-6">
+          <Panel compact fill title={t("Actual vs setpoint scatter", "Scatter: факт vs уставка")} subtitle={t("Each dot compares actual position with the setpoint; the dashed diagonal is the ideal match.", "Каждая точка сравнивает факт с уставкой; пунктирная диагональ — идеальное совпадение.")} className="col-span-6 h-[320px]">
+            <AdvancedChart option={setpointScatterOption} empty={!analytics.xyPath.length} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Axis error X/Y/Z", "Ошибка по осям X/Y/Z")} subtitle={t("Positive and negative deltas show which axis diverges from the setpoint.", "Положительные и отрицательные отклонения показывают, какая ось ушла от уставки.")} className="col-span-6 h-[300px]">
             <TrendLineChart
               compact
-              step
+              area
               height="100%"
               series={[
-                { name: "Вход DS1", data: data.linePass.diffuse1, color: "#22D3EE" },
-                { name: "Линия DS3", data: data.linePass.diffuse3, color: "#38BDF8" },
-                { name: "Буфер DS9", data: data.linePass.diffuse9, color: "#A78BFA" },
-                { name: "Vision", data: data.linePass.vision, color: "#F472B6" },
-                { name: "Сорт. DS10", data: data.linePass.diffuse10, color: "#F59E0B" },
+                { name: "dX", data: analytics.axisError.x, color: "#F43F5E" },
+                { name: "dY", data: analytics.axisError.y, color: "#22D3EE" },
+                { name: "dZ", data: analytics.axisError.z, color: "#A78BFA" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title={t("TCP error histogram", "Гистограмма ошибки TCP")} subtitle={t("Buckets show how often the positioning error falls into each range.", "Столбцы показывают, как часто ошибка попадает в каждый диапазон.")} className="col-span-3 h-[300px]">
+            <AdvancedChart option={histogramOption} empty={!analytics.errorHistogram.some((bucket) => bucket.count > 0)} />
+          </Panel>
+          <Panel compact fill title={t("Current TCP error gauge", "Gauge текущей ошибки TCP")} subtitle={t("Current total TCP error: green is low, yellow is warning, red is high.", "Текущая общая ошибка TCP: зелёный — норма, жёлтый — внимание, красный — высокая.")} className="col-span-3 h-[300px]">
+            <KpiGaugeChart
+              value={pose.error}
+              min={0}
+              max={5}
+              unit=""
+              color={pose.error > 2 ? colors.alarm : pose.error > 0.75 ? colors.warning : colors.success}
+              label={t("TCP error", "Ошибка TCP")}
+              height={250}
+              formatValue={(value) => value.toFixed(2)}
+            />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Cycle time trend", "Тренд времени цикла")} subtitle={t("Shows duration of completed pick cycles over time.", "Показывает длительность завершённых циклов захвата во времени.")} className="col-span-4 h-[280px]">
+            <TrendLineChart
+              compact
+              area
+              height="100%"
+              series={[{ name: t("Cycle time", "Время цикла"), data: analytics.cycleTime, color: "#F59E0B" }]}
+            />
+          </Panel>
+          <Panel compact fill title={t("Cycle Gantt: Box → Grab → Release", "Гант цикла: Box → Grab → Release")} subtitle={t("Stacked bars split each cycle into detection delay and hold time.", "Составные столбцы делят цикл на задержку до захвата и время удержания.")} className="col-span-4 h-[280px]">
+            <AdvancedChart option={cycleBarOption} empty={!analytics.cycles.length} />
+          </Panel>
+          <Panel compact fill title={t("Recent cycle cards", "Последние циклы")} subtitle={t("Quick list of recent completed cycles with total and hold duration.", "Краткий список последних завершённых циклов с общей длительностью и удержанием.")} className="col-span-4 h-[280px]">
+            <div className="grid h-full content-start gap-2 overflow-hidden text-xs">
+              {analytics.cycles.slice(-6).reverse().map((cycle) => (
+                <div key={cycle.id} className="grid grid-cols-[80px_1fr_auto] items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5">
+                  <span className="font-mono text-muted">{formatTime(cycle.end)}</span>
+                  <span className="truncate text-foreground">{formatDuration(cycle.durationSec, locale)}</span>
+                  <span className="font-mono text-[#22D3EE]">{cycle.holdSec.toFixed(1)}s</span>
+                </div>
+              ))}
+              {!analytics.cycles.length && <div className="flex h-full items-center justify-center text-muted">{t("No completed cycles", "Нет завершённых циклов")}</div>}
+            </div>
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Sensor activity heatmap", "Heatmap активности датчиков")} subtitle={t("Color intensity shows how often each signal was active in each time bucket.", "Интенсивность цвета показывает, как часто сигнал был активен в каждом временном окне.")} className="col-span-6 h-[330px]">
+            <AdvancedChart option={heatmapOption} empty={!analytics.sensorHeatmap.length} />
+          </Panel>
+          <Panel compact fill title={t("Pulse counts", "Количество импульсов")} subtitle={t("Counts rising edges for sensors and actuators in the current history window.", "Считает фронты включения датчиков и исполнительных сигналов в текущем окне истории.")} className="col-span-3 h-[330px]">
+            <AdvancedChart option={pulseCountOption} empty={!analytics.pulseCounts.length} />
+          </Panel>
+          <Panel compact fill title={t("Grab / Box correlation", "Корреляция Grab / Box")} subtitle={t("Compares box detection and grab state to reveal misses or false grabs.", "Сравнивает обнаружение коробки и состояние захвата, чтобы увидеть пропуски или ложные захваты.")} className="col-span-3 h-[330px]">
+            <AdvancedChart option={correlationOption} empty={!analytics.grabBoxCorrelation.matched && !analytics.grabBoxCorrelation.boxOnly && !analytics.grabBoxCorrelation.grabOnly} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Event timeline", "Timeline событий")} subtitle={t("Recent process events: BOX, GRAB and RELEASE from completed cycles.", "Последние события процесса: BOX, GRAB и RELEASE из завершённых циклов.")} className="col-span-6 h-[300px]">
+            <EventTimelineChart items={analytics.events} height={250} />
+          </Panel>
+          <Panel compact fill title={t("Mini chart X", "Мини-график X")} subtitle={t("Compact trend of the X axis.", "Компактный тренд оси X.")} className="col-span-2 h-[300px]">
+            <TrendLineChart compact area height="100%" series={[{ name: "X", data: arm.x, color: "#F43F5E" }]} />
+          </Panel>
+          <Panel compact fill title={t("Mini chart Y", "Мини-график Y")} subtitle={t("Compact trend of the Y axis.", "Компактный тренд оси Y.")} className="col-span-2 h-[300px]">
+            <TrendLineChart compact area height="100%" series={[{ name: "Y", data: arm.y, color: "#22D3EE" }]} />
+          </Panel>
+          <Panel compact fill title={t("Mini chart Z", "Мини-график Z")} subtitle={t("Compact trend of the Z axis.", "Компактный тренд оси Z.")} className="col-span-2 h-[300px]">
+            <TrendLineChart compact area height="100%" series={[{ name: "Z", data: arm.z, color: "#A78BFA" }]} />
+          </Panel>
+        </div>
+
+        <SectionTitle>{t("Existing trend variations", "Существующие вариации трендов")}</SectionTitle>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Line pass — tracks (step)", "Проход по линии — дорожки (step)")} subtitle={t("Digital lanes show the order of sensor activations along the line.", "Цифровые дорожки показывают порядок срабатывания датчиков по линии.")} className="col-span-12 h-[300px]">
+            <TrendLineChart compact step height="100%" series={passSeries} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Line pass — area", "Проход по линии — area")} subtitle={t("Area view makes overlapping sensor activity easier to compare.", "Заливка помогает сравнивать перекрывающуюся активность датчиков.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact area height="100%" series={passSeries} />
+          </Panel>
+          <Panel compact fill title={t("Line pass — step + area", "Проход по линии — step + area")} subtitle={t("Step lines preserve digital edges, while area highlights active intervals.", "Ступени сохраняют цифровые фронты, а заливка подчёркивает активные интервалы.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact step area height="100%" series={passSeries} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Sorting — tracks (step)", "Сортировка — дорожки (step)")} subtitle={t("Shows which route was active for blue, green and metal products.", "Показывает активные маршруты для синих, зелёных и металлических деталей.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact step height="100%" series={sortingSeries} />
+          </Panel>
+          <Panel compact fill title={t("Sorting — step + area + stack", "Сортировка — step + area + stack")} subtitle={t("Stacked view emphasizes total sorting load and route overlap.", "Стековая заливка подчёркивает суммарную нагрузку сортировки и пересечения маршрутов.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact step area stack height="100%" series={sortingSeries} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Grab cycle: error + box + grab", "Цикл захвата: ошибка + box + grab")} subtitle={t("Compares positioning error with box detection and grab command.", "Сравнивает ошибку позиционирования с обнаружением коробки и командой захвата.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact height="100%" series={pickSeries} />
+          </Panel>
+          <Panel compact fill title={t("Grab cycle — area", "Цикл захвата — area")} subtitle={t("Area fill makes active grab/box intervals visible against the error curve.", "Заливка делает интервалы Box/Grab заметными на фоне кривой ошибки.")} className="col-span-6 h-[280px]">
+            <TrendLineChart compact area height="100%" series={pickSeries} />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("FX5 XYZ position (actual)", "FX5 позиция XYZ (факт)")} subtitle={t("Actual measured position of the FX5 axes from PLC history.", "Фактическое положение осей FX5 по истории PLC.")} className="col-span-6 h-[280px]">
+            <TrendLineChart
+              compact
+              area
+              height="100%"
+              series={[
+                { name: "X", data: arm.x, color: "#F43F5E" },
+                { name: "Y", data: arm.y, color: "#22D3EE" },
+                { name: "Z", data: arm.z, color: "#A78BFA" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title={t("FX5 XYZ setpoints", "FX5 уставки XYZ (setpoint)")} subtitle={t("Commanded setpoints for the same axes, used as the target trajectory.", "Командные уставки тех же осей, то есть целевая траектория.")} className="col-span-6 h-[280px]">
+            <TrendLineChart
+              compact
+              area
+              height="100%"
+              series={[
+                { name: "SX", data: arm.sx, color: "#FB7185" },
+                { name: "SY", data: arm.sy, color: "#67E8F9" },
+                { name: "SZ", data: arm.sz, color: "#C4B5FD" },
               ]}
             />
           </Panel>
         </div>
 
-        <div className="grid min-h-0 grid-cols-12 gap-3">
-          <Panel compact fill title="Сортировка: маршруты на склад" className="col-span-6">
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("FX5 X: actual vs setpoint", "FX5 X: факт vs уставка")} subtitle={t("X axis tracking quality: closer lines mean better following.", "Качество слежения оси X: чем ближе линии, тем лучше отработка.")} className="col-span-4 h-[260px]">
+            <TrendLineChart
+              compact
+              height="100%"
+              series={[
+                { name: t("X actual", "X факт"), data: arm.x, color: "#F43F5E" },
+                { name: t("X setpoint", "X уставка"), data: arm.sx, color: "#F59E0B" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title={t("FX5 Y: actual vs setpoint", "FX5 Y: факт vs уставка")} subtitle={t("Y axis tracking quality against the commanded setpoint.", "Качество слежения оси Y относительно командной уставки.")} className="col-span-4 h-[260px]">
+            <TrendLineChart
+              compact
+              height="100%"
+              series={[
+                { name: t("Y actual", "Y факт"), data: arm.y, color: "#22D3EE" },
+                { name: t("Y setpoint", "Y уставка"), data: arm.sy, color: "#F59E0B" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title={t("FX5 Z: actual vs setpoint", "FX5 Z: факт vs уставка")} subtitle={t("Z axis tracking quality, useful for pick and release height issues.", "Качество слежения оси Z, полезно для проблем высоты захвата и сброса.")} className="col-span-4 h-[260px]">
+            <TrendLineChart
+              compact
+              height="100%"
+              series={[
+                { name: t("Z actual", "Z факт"), data: arm.z, color: "#A78BFA" },
+                { name: t("Z setpoint", "Z уставка"), data: arm.sz, color: "#F59E0B" },
+              ]}
+            />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("FX5 XYZ actual — step", "FX5 XYZ факт — step")} subtitle={t("Step rendering makes discrete PLC updates easier to see.", "Ступенчатый вид лучше показывает дискретные обновления PLC.")} className="col-span-4 h-[260px]">
             <TrendLineChart
               compact
               step
               height="100%"
               series={[
-                { name: "Синие ← left", data: data.sorting.left, color: "#2563EB" },
-                { name: "Зелёные → right", data: data.sorting.right, color: "#10B981" },
-                { name: "Серые metal", data: data.sorting.metal, color: "#94A3B8" },
+                { name: "X", data: arm.x, color: "#F43F5E" },
+                { name: "Y", data: arm.y, color: "#22D3EE" },
+                { name: "Z", data: arm.z, color: "#A78BFA" },
               ]}
             />
           </Panel>
-          <Panel compact fill title="Цикл захвата: ошибка + box + grab" className="col-span-6">
+          <Panel compact fill title={t("FX5 XYZ actual — stack + area", "FX5 XYZ факт — stack + area")} subtitle={t("Stacked area is a visual load view, not a physical sum of coordinates.", "Стековая заливка — визуальный вид нагрузки, не физическая сумма координат.")} className="col-span-4 h-[260px]">
+            <TrendLineChart
+              compact
+              area
+              stack
+              height="100%"
+              series={[
+                { name: "X", data: arm.x, color: "#F43F5E" },
+                { name: "Y", data: arm.y, color: "#22D3EE" },
+                { name: "Z", data: arm.z, color: "#A78BFA" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title={t("Positioning error", "Ошибка позиционирования")} subtitle={t("Total TCP error computed from X/Y/Z actual minus setpoint.", "Итоговая ошибка TCP считается из отклонений X/Y/Z от уставок.")} className="col-span-4 h-[260px]">
+            <TrendLineChart
+              compact
+              area
+              height="100%"
+              series={[{ name: t("TCP error", "Ошибка TCP"), data: pickCycle.error, color: "#F43F5E" }]}
+            />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title="Grab / Box — step" subtitle={t("Step view shows exact digital transitions of box detection and grab.", "Ступенчатый вид показывает точные цифровые переходы Box detected и Grab.")} className="col-span-6 h-[260px]">
+            <TrendLineChart
+              compact
+              step
+              height="100%"
+              series={[
+                { name: "Box detected", data: pickCycle.boxDetected, color: "#A78BFA" },
+                { name: "Grab", data: pickCycle.grab, color: "#22D3EE" },
+              ]}
+            />
+          </Panel>
+          <Panel compact fill title="Grab / Box — step + area" subtitle={t("Area highlights how long each binary state stayed active.", "Заливка подчёркивает, как долго каждый бинарный сигнал был активен.")} className="col-span-6 h-[260px]">
+            <TrendLineChart
+              compact
+              step
+              area
+              height="100%"
+              series={[
+                { name: "Box detected", data: pickCycle.boxDetected, color: "#A78BFA" },
+                { name: "Grab", data: pickCycle.grab, color: "#22D3EE" },
+              ]}
+            />
+          </Panel>
+        </div>
+
+        <div className="grid grid-cols-12 gap-3">
+          <Panel compact fill title={t("Sorting — area (smooth)", "Сортировка — area (smooth)")} subtitle={t("Smooth area view is useful for quickly comparing route activity.", "Плавная заливка удобна для быстрого сравнения активности маршрутов.")} className="col-span-6 h-[260px]">
+            <TrendLineChart compact area height="100%" series={sortingSeries} />
+          </Panel>
+          <Panel compact fill title={t("All setpoints vs Z actual", "Все уставки vs Z факт")} subtitle={t("Compares commanded XYZ setpoints with actual Z motion for height diagnostics.", "Сравнивает уставки XYZ с фактическим движением Z для диагностики высоты.")} className="col-span-6 h-[260px]">
             <TrendLineChart
               compact
               height="100%"
               series={[
-                { name: "Ошибка поз.", data: data.pickCycle.error, color: "#F43F5E" },
-                { name: "Box detected", data: data.pickCycle.boxDetected, color: "#A78BFA" },
-                { name: "Grab", data: data.pickCycle.grab, color: "#22D3EE" },
+                { name: "SX", data: arm.sx, color: "#FB7185" },
+                { name: "SY", data: arm.sy, color: "#67E8F9" },
+                { name: "SZ", data: arm.sz, color: "#C4B5FD" },
+                { name: t("Z actual", "Z факт"), data: arm.z, color: "#F59E0B" },
               ]}
             />
           </Panel>

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 
 type Locale = "en" | "ru";
 
@@ -10,10 +10,30 @@ interface LocaleContextValue {
   t: (en: string, ru: string) => string;
 }
 
+const STORAGE_KEY = "expo-dashboard-locale";
+
 const LocaleContext = createContext<LocaleContextValue | null>(null);
+
+function readStoredLocale(): Locale {
+  if (typeof window === "undefined") return "ru";
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  return stored === "en" || stored === "ru" ? stored : "ru";
+}
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>("ru");
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setLocale(readStoredLocale());
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.lang = locale;
+    window.localStorage.setItem(STORAGE_KEY, locale);
+  }, [locale, ready]);
 
   const toggleLocale = useCallback(() => {
     setLocale((l) => (l === "en" ? "ru" : "en"));

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { LineStatus, Tag, TagDirection, TagType, TrendPoint } from "@/entities/types";
+import type { LineStatus, ProcessEvent, Tag, TagDirection, TagType, TrendPoint } from "@/entities/types";
 
 export type PlcDataSource = "live-api" | "db-replay" | "unavailable";
 export type ProductColor = "blue" | "green" | "metal";
@@ -1133,7 +1133,7 @@ function buildProductionDynamics(rows: RawReading[]): ProductionDynamics {
   const cycleTime: TrendPoint[] = [];
 
   let ei = 0;
-  let counts: ColorCounts = { blue: 0, green: 0, metal: 0 };
+  const counts: ColorCounts = { blue: 0, green: 0, metal: 0 };
   let lastCycle = 0;
 
   for (const tsText of sampled) {
@@ -1279,6 +1279,63 @@ export interface ProcessPayload {
     grab: TrendPoint[];
     boxDetected: TrendPoint[];
   };
+  analytics: ProcessAnalytics;
+}
+
+export interface ProcessPathPoint {
+  timestamp: string;
+  x: number;
+  y: number;
+  z: number;
+  sx: number;
+  sy: number;
+  sz: number;
+  error: number;
+}
+
+export interface ProcessCycle {
+  id: string;
+  start: string;
+  end: string;
+  durationSec: number;
+  grabDelaySec: number;
+  holdSec: number;
+}
+
+export interface ProcessHeatmapPoint {
+  sensor: string;
+  bucket: string;
+  value: number;
+}
+
+export interface ProcessPulseCount {
+  sensor: string;
+  count: number;
+}
+
+export interface ProcessCorrelation {
+  matched: number;
+  boxOnly: number;
+  grabOnly: number;
+  idle: number;
+}
+
+export interface ProcessAnalytics {
+  xyPath: ProcessPathPoint[];
+  axisError: {
+    x: TrendPoint[];
+    y: TrendPoint[];
+    z: TrendPoint[];
+    total: TrendPoint[];
+  };
+  errorHistogram: Array<{ bucket: string; count: number }>;
+  cycles: ProcessCycle[];
+  cycleTime: TrendPoint[];
+  sensorHeatmap: ProcessHeatmapPoint[];
+  pulseCounts: ProcessPulseCount[];
+  grabBoxCorrelation: ProcessCorrelation;
+  events: ProcessEvent[];
+  currentErrorRatio: number;
 }
 
 function toBinaryTrend(points: TrendPoint[]): TrendPoint[] {
@@ -1317,6 +1374,184 @@ function getArmErrorTrend(limit = 120): TrendPoint[] {
   return error;
 }
 
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function boolValue(point: TrendPoint | undefined): boolean {
+  return (point?.value ?? 0) > 0;
+}
+
+function countRisingEdges(points: TrendPoint[]): number {
+  let count = 0;
+  let prev = 0;
+  for (const point of points) {
+    const value = point.value > 0 ? 1 : 0;
+    if (prev === 0 && value === 1) count += 1;
+    prev = value;
+  }
+  return count;
+}
+
+function buildAxisError(
+  x: TrendPoint[],
+  y: TrendPoint[],
+  z: TrendPoint[],
+  sx: TrendPoint[],
+  sy: TrendPoint[],
+  sz: TrendPoint[],
+) {
+  const n = Math.min(x.length, y.length, z.length, sx.length, sy.length, sz.length);
+  const ex: TrendPoint[] = [];
+  const ey: TrendPoint[] = [];
+  const ez: TrendPoint[] = [];
+  const total: TrendPoint[] = [];
+  const path: ProcessPathPoint[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const dx = x[i].value - sx[i].value;
+    const dy = y[i].value - sy[i].value;
+    const dz = z[i].value - sz[i].value;
+    const error = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const timestamp = x[i].timestamp;
+    ex.push({ timestamp, value: round3(dx) });
+    ey.push({ timestamp, value: round3(dy) });
+    ez.push({ timestamp, value: round3(dz) });
+    total.push({ timestamp, value: round3(error) });
+    path.push({
+      timestamp,
+      x: x[i].value,
+      y: y[i].value,
+      z: z[i].value,
+      sx: sx[i].value,
+      sy: sy[i].value,
+      sz: sz[i].value,
+      error: round3(error),
+    });
+  }
+
+  return { path, axisError: { x: ex, y: ey, z: ez, total } };
+}
+
+function buildErrorHistogram(points: TrendPoint[]): Array<{ bucket: string; count: number }> {
+  const buckets = [
+    { min: 0, max: 0.25, label: "0-0.25" },
+    { min: 0.25, max: 0.5, label: "0.25-0.5" },
+    { min: 0.5, max: 1, label: "0.5-1" },
+    { min: 1, max: 2, label: "1-2" },
+    { min: 2, max: Number.POSITIVE_INFINITY, label: "2+" },
+  ];
+  return buckets.map((bucket) => ({
+    bucket: bucket.label,
+    count: points.filter((point) => point.value >= bucket.min && point.value < bucket.max).length,
+  }));
+}
+
+function buildCycles(box: TrendPoint[], grab: TrendPoint[]): { cycles: ProcessCycle[]; cycleTime: TrendPoint[]; events: ProcessEvent[] } {
+  const n = Math.min(box.length, grab.length);
+  const cycles: ProcessCycle[] = [];
+  const cycleTime: TrendPoint[] = [];
+  const events: ProcessEvent[] = [];
+  let activeStart: TrendPoint | null = null;
+  let grabStart: TrendPoint | null = null;
+  let prevBox = 0;
+  let prevGrab = 0;
+
+  for (let i = 0; i < n; i++) {
+    const boxOn = box[i].value > 0 ? 1 : 0;
+    const grabOn = grab[i].value > 0 ? 1 : 0;
+
+    if (prevBox === 0 && boxOn === 1) {
+      activeStart = box[i];
+      events.push({
+        id: `box-${i}`,
+        type: "BOX",
+        message: "Box detected on FX5 pick cycle",
+        zoneId: "Z05",
+        equipmentId: "EQ_Z05_FX5",
+        timestamp: box[i].timestamp,
+      });
+    }
+    if (prevGrab === 0 && grabOn === 1) {
+      grabStart = grab[i];
+      events.push({
+        id: `grab-${i}`,
+        type: "GRAB",
+        message: "FX5 grab activated",
+        zoneId: "Z05",
+        equipmentId: "EQ_Z05_FX5",
+        timestamp: grab[i].timestamp,
+      });
+    }
+    if (prevGrab === 1 && grabOn === 0 && activeStart && grabStart) {
+      const startMs = new Date(activeStart.timestamp).getTime();
+      const grabMs = new Date(grabStart.timestamp).getTime();
+      const endMs = new Date(grab[i].timestamp).getTime();
+      if (Number.isFinite(startMs) && Number.isFinite(grabMs) && Number.isFinite(endMs) && endMs > startMs) {
+        const durationSec = round3((endMs - startMs) / 1000);
+        const cycle: ProcessCycle = {
+          id: `cycle-${cycles.length + 1}`,
+          start: activeStart.timestamp,
+          end: grab[i].timestamp,
+          durationSec,
+          grabDelaySec: round3(Math.max(0, (grabMs - startMs) / 1000)),
+          holdSec: round3(Math.max(0, (endMs - grabMs) / 1000)),
+        };
+        cycles.push(cycle);
+        cycleTime.push({ timestamp: cycle.end, value: durationSec });
+        events.push({
+          id: `release-${i}`,
+          type: "RELEASE",
+          message: `FX5 cycle completed in ${durationSec.toFixed(1)}s`,
+          zoneId: "Z05",
+          equipmentId: "EQ_Z05_FX5",
+          timestamp: grab[i].timestamp,
+        });
+      }
+      activeStart = null;
+      grabStart = null;
+    }
+
+    prevBox = boxOn;
+    prevGrab = grabOn;
+  }
+
+  return { cycles: cycles.slice(-16), cycleTime: cycleTime.slice(-60), events: events.slice(-24) };
+}
+
+function buildSensorHeatmap(sensors: Array<{ name: string; data: TrendPoint[] }>): ProcessHeatmapPoint[] {
+  const bucketCount = 12;
+  return sensors.flatMap((sensor) => {
+    if (!sensor.data.length) return [];
+    const step = Math.max(1, Math.ceil(sensor.data.length / bucketCount));
+    const points: ProcessHeatmapPoint[] = [];
+    for (let start = 0; start < sensor.data.length; start += step) {
+      const bucket = sensor.data.slice(start, start + step);
+      const value = bucket.reduce((sum, point) => sum + (point.value > 0 ? 1 : 0), 0);
+      points.push({
+        sensor: sensor.name,
+        bucket: bucket[0]?.timestamp ?? String(points.length + 1),
+        value,
+      });
+    }
+    return points;
+  });
+}
+
+function buildCorrelation(box: TrendPoint[], grab: TrendPoint[]): ProcessCorrelation {
+  const n = Math.min(box.length, grab.length);
+  const result: ProcessCorrelation = { matched: 0, boxOnly: 0, grabOnly: 0, idle: 0 };
+  for (let i = 0; i < n; i++) {
+    const b = boolValue(box[i]);
+    const g = boolValue(grab[i]);
+    if (b && g) result.matched += 1;
+    else if (b) result.boxOnly += 1;
+    else if (g) result.grabOnly += 1;
+    else result.idle += 1;
+  }
+  return result;
+}
+
 export async function getProcessPayload(): Promise<ProcessPayload> {
   const snap = await getPlcSnapshot();
   const status = snap?.status ?? (await getPlcStatus());
@@ -1343,6 +1578,26 @@ export async function getProcessPayload(): Promise<ProcessPayload> {
 
   const grab = toBinaryTrend(getTrend("fx5_pick_place_grab", limit));
   const boxDetected = toBinaryTrend(getTrend("fx5_box_detected", limit));
+  const armX = getTrend("fx5_pick_place_x_position", limit);
+  const armY = getTrend("fx5_pick_place_y_position", limit);
+  const armZ = getTrend("fx5_pick_place_z_position", limit);
+  const armSx = getTrend("fx5_pick_place_x_setpoint", limit);
+  const armSy = getTrend("fx5_pick_place_y_setpoint", limit);
+  const armSz = getTrend("fx5_pick_place_z_setpoint", limit);
+  const { path, axisError } = buildAxisError(armX, armY, armZ, armSx, armSy, armSz);
+  const cycleAnalytics = buildCycles(boxDetected, grab);
+  const heatmapSensors = [
+    { name: "DS1", data: diffuse1 },
+    { name: "DS3", data: diffuse3 },
+    { name: "DS9", data: diffuse9 },
+    { name: "Vision", data: vision },
+    { name: "DS10", data: diffuse10 },
+    { name: "Left", data: left },
+    { name: "Right", data: right },
+    { name: "Metal", data: metal },
+    { name: "Box", data: boxDetected },
+    { name: "Grab", data: grab },
+  ];
 
   return {
     status,
@@ -1358,12 +1613,12 @@ export async function getProcessPayload(): Promise<ProcessPayload> {
       error,
     },
     arm: {
-      x: getTrend("fx5_pick_place_x_position", limit),
-      y: getTrend("fx5_pick_place_y_position", limit),
-      z: getTrend("fx5_pick_place_z_position", limit),
-      sx: getTrend("fx5_pick_place_x_setpoint", limit),
-      sy: getTrend("fx5_pick_place_y_setpoint", limit),
-      sz: getTrend("fx5_pick_place_z_setpoint", limit),
+      x: armX,
+      y: armY,
+      z: armZ,
+      sx: armSx,
+      sy: armSy,
+      sz: armSz,
     },
     linePass: {
       diffuse1: laneTrend(diffuse1, 4),
@@ -1378,9 +1633,21 @@ export async function getProcessPayload(): Promise<ProcessPayload> {
       metal: laneTrend(metal, 0),
     },
     pickCycle: {
-      error: getArmErrorTrend(limit),
+      error: axisError.total.length ? axisError.total : getArmErrorTrend(limit),
       grab: laneTrend(grab, 8),
       boxDetected: laneTrend(boxDetected, 7),
+    },
+    analytics: {
+      xyPath: path,
+      axisError,
+      errorHistogram: buildErrorHistogram(axisError.total),
+      cycles: cycleAnalytics.cycles,
+      cycleTime: cycleAnalytics.cycleTime,
+      sensorHeatmap: buildSensorHeatmap(heatmapSensors),
+      pulseCounts: heatmapSensors.map((sensor) => ({ sensor: sensor.name, count: countRisingEdges(sensor.data) })),
+      grabBoxCorrelation: buildCorrelation(boxDetected, grab),
+      events: cycleAnalytics.events,
+      currentErrorRatio: Math.min(1, error / 5),
     },
   };
 }
