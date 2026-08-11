@@ -289,13 +289,13 @@ export default function ProcessPage() {
     };
 
   return (
-    <DashboardShell breadcrumbs={[{ label: t("Line processes (demo)", "Процессы линии (демо)") }]}>
+    <DashboardShell breadcrumbs={[{ label: t("Line processes", "Процессы линии") }]}>
       <div className="flex flex-col gap-3 pb-4">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-panel px-4 py-2">
           <div className="text-sm text-muted">
             {t(
-              "All PLC trend variations: sensors, sorting, FX5, grab cycle",
-              "Все вариации трендов PLC: датчики, сортировка, FX5, цикл захвата",
+              "Realtime PLC trends: sensors, sorting, FX5, grab cycle",
+              "Realtime-тренды PLC: датчики, сортировка, FX5, цикл захвата",
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">

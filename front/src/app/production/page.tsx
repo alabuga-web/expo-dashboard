@@ -234,8 +234,8 @@ function ConveyorView({
     partColor === "blue" ? "#2EC4C6" : partColor === "green" ? "#8ED44A" : partColor === "metal" ? "#A4AAB2" : "#8B949E";
 
   return (
-    <div className="grid h-full grid-cols-[1fr_148px] gap-3">
-      <div className="relative min-h-[260px] overflow-hidden rounded-xl border border-border bg-[#0D1117]">
+    <div className="grid h-full min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_148px] gap-3 overflow-hidden">
+      <div className="relative min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-[#0D1117]">
         <svg viewBox="0 0 640 220" className="h-full w-full" preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="floorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -428,29 +428,6 @@ function ColorShare({ data }: { data: ProductionPayload["produced"] }) {
   );
 }
 
-function Warehouse({ data }: { data: ProductionPayload["warehouse"] }) {
-  const { t } = useLocale();
-  const max = Math.max(data.blue, data.green, data.metal, 1);
-  return (
-    <div className="grid h-full grid-cols-3 gap-3">
-      {(["blue", "green", "metal"] as ProductColor[]).map((color) => {
-        const level = Math.max(8, Math.round((data[color] / max) * 100));
-        return (
-          <div key={color} className="flex min-h-0 flex-col rounded-xl border border-border bg-background p-3">
-            <div className="mb-3 text-center text-sm font-semibold text-foreground">{colorLabel(color, t)}</div>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-[#0D1117]">
-              <div className={`absolute bottom-0 left-0 right-0 ${colorMeta[color].bg}`} style={{ height: `${level}%` }} />
-              <div className={`absolute inset-0 flex items-center justify-center text-3xl font-bold ${colorMeta[color].text}`}>
-                {data[color]}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function RecentColors({ colors }: { colors: ProductColor[] }) {
   const { t } = useLocale();
   return (
@@ -491,56 +468,76 @@ export default function ProductionPage() {
           <div className="col-span-2">
             <KpiTile
               compact
-              label={t("Rate", "Скорость")}
-              value={data.ratePerMin.toFixed(0)}
-              unit={t("pcs/min", "шт/мин")}
+              label={t("Assembled", "Собрано")}
+              value={String(data.assembled.total)}
+              unit={t("pcs", "шт")}
               variant="success"
             />
           </div>
           <div className="col-span-2">
             <KpiTile
               compact
-              label={t("Warehouse", "Склад")}
-              value={String(data.warehouse.blue + data.warehouse.green + data.warehouse.metal)}
-              unit={t("pcs", "шт")}
+              label={t("Rate", "Скорость")}
+              value={data.ratePerMin.toFixed(0)}
+              unit={t("pcs/min", "шт/мин")}
             />
           </div>
-          <div className="col-span-6 flex items-center justify-end gap-2 rounded-lg border border-border bg-panel px-4">
+          <div className="col-span-2">
+            <KpiTile
+              compact
+              label={t("Warehouse", "Склад")}
+              value={String(data.occupancy.filled)}
+              unit={`/ ${data.occupancy.filled + data.occupancy.empty || data.occupancy.capacity}`}
+            />
+          </div>
+          <div className="col-span-4 flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-panel px-4 py-2">
             <StatusPill
               active={data.status.connected}
               label={data.status.source === "db-replay" ? t("DB Replay", "Replay БД") : "Live OPC"}
             />
             <StatusPill active={data.status.operatingMode === 8 || data.status.operatingMode === 9} label={`PLC ${data.status.operatingModeLabel}`} />
-            <StatusPill active={data.status.heartbeatAlive} label="Heartbeat" />
+            <StatusPill
+              active={Boolean(data.productionColor)}
+              label={
+                data.productionColor
+                  ? `${t("Mode", "Режим")}: ${colorLabel(data.productionColor, t)}`
+                  : t("Mode: none", "Режим: нет")
+              }
+            />
+            <StatusPill active={data.assemblyActive} label={t("Assembly", "Сборка")} />
+            <StatusPill active={data.detalComplete} label={t("Detail done", "Деталь готова")} />
           </div>
         </div>
 
         <div className="grid min-h-0 grid-cols-12 gap-3">
-          <Panel compact fill title={t("Part movement on the line", "Движение детали по линии")} className="col-span-9">
+          <Panel compact fill title={t("Part movement on the line", "Движение детали по линии")} className="col-span-9 min-w-0 overflow-hidden">
             <ConveyorView
               conveyor={data.conveyor}
               recentColors={data.recentColors}
               lastColor={data.lastColor}
             />
           </Panel>
-          <Panel compact fill title={t("Warehouse fill", "Заполнение склада")} className="col-span-3">
-            <Warehouse data={data.warehouse} />
-          </Panel>
-        </div>
-
-        <div className="grid min-h-0 grid-cols-12 gap-3">
-          <Panel compact fill title={t("Output by color", "Выпуск по цветам")} className="col-span-3">
-            <div className="grid h-full grid-rows-[1fr_auto] gap-4">
-              <ColorShare data={data.produced} />
+          <Panel compact fill title={t("Output by color", "Выпуск по цветам")} className="col-span-3 min-w-0 overflow-hidden">
+            <div className="grid h-full grid-rows-[1fr_auto_auto] gap-4">
+              <ColorShare data={data.assembled.total > 0 ? data.assembled : data.produced} />
               <div>
                 <div className="mb-2 text-xs uppercase tracking-wider text-muted">
-                  {t("Recent parts", "Последние детали")}
+                  {t("Recent assembled", "Последние собранные")}
+                </div>
+                <RecentColors colors={data.recentAssembled.length ? data.recentAssembled : data.recentColors} />
+              </div>
+              <div>
+                <div className="mb-2 text-xs uppercase tracking-wider text-muted">
+                  {t("Recent sorted", "Последние сорт.")}
                 </div>
                 <RecentColors colors={data.recentColors} />
               </div>
             </div>
           </Panel>
-          <Panel compact fill title={t("Cumulative output", "Накопительный выпуск")} className="col-span-5">
+        </div>
+
+        <div className="grid min-h-0 grid-cols-12 gap-3">
+          <Panel compact fill title={t("Cumulative output", "Накопительный выпуск")} className="col-span-7 min-w-0 overflow-hidden">
             <TrendLineChart
               compact
               area
@@ -554,7 +551,7 @@ export default function ProductionPage() {
               ]}
             />
           </Panel>
-          <Panel compact fill title={t("Output rate and cycle", "Скорость выпуска и цикл")} className="col-span-4">
+          <Panel compact fill title={t("Output rate and cycle", "Скорость выпуска и цикл")} className="col-span-5 min-w-0 overflow-hidden">
             <TrendLineChart
               compact
               area

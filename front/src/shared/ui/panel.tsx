@@ -25,7 +25,7 @@ export function Panel({
       className={cn(
         "flex flex-col rounded-lg border border-border bg-panel",
         compact ? "p-2.5" : "p-5",
-        fill && "min-h-0 flex-1",
+        fill && "min-h-0 min-w-0 flex-1 overflow-hidden",
         className
       )}
     >
@@ -44,7 +44,7 @@ export function Panel({
           {headerRight}
         </div>
       )}
-      <div className={cn(fill && "min-h-0 flex-1")}>{children}</div>
+      <div className={cn(fill && "min-h-0 min-w-0 flex-1 overflow-hidden")}>{children}</div>
     </div>
   );
 }
