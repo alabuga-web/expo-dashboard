@@ -1,4 +1,7 @@
+"use client";
+
 import { cn } from "@/shared/lib/cn";
+import { LocaleText } from "@/features/locale-toggle/locale-context";
 
 interface KpiTileProps {
   label: string;
@@ -36,7 +39,7 @@ export function KpiTile({
       )}
     >
       <p className={cn("uppercase tracking-wider text-[#8B949E]", compact ? "text-[10px]" : "text-xs")}>
-        {label}
+        <LocaleText>{label}</LocaleText>
       </p>
       <div className={cn("flex items-baseline gap-1.5", compact ? "mt-0.5" : "mt-2")}>
         <span
@@ -49,7 +52,9 @@ export function KpiTile({
           {value}
         </span>
         {unit && (
-          <span className={cn("text-[#8B949E]", compact ? "text-[10px]" : "text-sm")}>{unit}</span>
+          <span className={cn("text-[#8B949E]", compact ? "text-[10px]" : "text-sm")}>
+            <LocaleText>{unit}</LocaleText>
+          </span>
         )}
       </div>
     </div>

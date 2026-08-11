@@ -1016,21 +1016,31 @@ async function eventsFromLiveApi(limit = 800): Promise<LiveHighEvent[]> {
 }
 
 /**
- * События выпуска для графиков/скорости.
- * Берём один источник (без двойного счёта): assembled → warehouse_route → sorter → vision1.
+ * События выпуска для графиков/скорости (Cumulative output).
+ * Один источник без двойного счёта.
+ *
+ * На live-линии warehouse_route почти всегда только metal (FX3 Turn/Belt),
+ * а blue/green идут через sorter_direction / Vision1 — из-за этого на графике
+ * «вверх шёл только серый». Для «Накопительный выпуск» берём то, что видит
+ * вход линии (как KPI produced): Vision1 → sorter → warehouse → assembled.
  */
 function collectLiveOutputEvents(events: LiveHighEvent[]): Array<{ ts: number; tsText: string; color: ProductColor }> {
   const chrono = [...events].reverse();
   const hasAssembled = chrono.some((e) => e.metric === "part_assembled");
   const hasWarehouse = chrono.some((e) => e.metric === "warehouse_route");
   const hasSorter = chrono.some((e) => e.metric === "sorter_direction");
-  const preferred = hasAssembled
-    ? "part_assembled"
-    : hasWarehouse
-      ? "warehouse_route"
-      : hasSorter
-        ? "sorter_direction"
-        : "vision_reading";
+  const hasVision1 = chrono.some(
+    (e) => e.metric === "vision_reading" && e.tag === "Vision Sensor 1 (Value)",
+  );
+  const preferred = hasVision1
+    ? "vision_reading"
+    : hasSorter
+      ? "sorter_direction"
+      : hasWarehouse
+        ? "warehouse_route"
+        : hasAssembled
+          ? "part_assembled"
+          : "vision_reading";
 
   const out: Array<{ ts: number; tsText: string; color: ProductColor }> = [];
   let prevVision = 0;
@@ -1081,6 +1091,8 @@ function collectLiveOutputEvents(events: LiveHighEvent[]): Array<{ ts: number; t
 
 function buildDynamicsFromOutputEvents(
   events: Array<{ ts: number; tsText: string; color: ProductColor }>,
+  /** Absolute produced totals — keeps Y-axis from resetting when the events window slides. */
+  totals?: ColorCounts,
 ): ProductionDynamics {
   if (!events.length) {
     return {
@@ -1097,7 +1109,16 @@ function buildDynamicsFromOutputEvents(
   const metal: TrendPoint[] = [];
   const throughput: TrendPoint[] = [];
   const cycleTime: TrendPoint[] = [];
-  const counts: ColorCounts = { blue: 0, green: 0, metal: 0 };
+
+  const windowCounts: ColorCounts = { blue: 0, green: 0, metal: 0 };
+  for (const event of events) windowCounts[event.color] += 1;
+  // Start from (totals − window) so the series ends at KPI produced.* and does not
+  // jump back to 0 when old events leave the /api/events?limit=800 window.
+  const counts: ColorCounts = {
+    blue: Math.max(0, (totals?.blue ?? windowCounts.blue) - windowCounts.blue),
+    green: Math.max(0, (totals?.green ?? windowCounts.green) - windowCounts.green),
+    metal: Math.max(0, (totals?.metal ?? windowCounts.metal) - windowCounts.metal),
+  };
   let lastCycle = 0;
 
   for (let i = 0; i < events.length; i++) {
@@ -1587,6 +1608,11 @@ function getTrend(tagName: string, limit = 90): TrendPoint[] {
 const LIVE_RING_MAX = 180;
 const liveRingBuffer = new Map<string, TrendPoint[]>();
 
+/** Called after /api/reset so process/production charts start empty. */
+export function clearLiveRingBuffer(): void {
+  liveRingBuffer.clear();
+}
+
 function pushLiveRing(tagName: string, tags: Map<string, Tag>): void {
   const tag = tags.get(tagName);
   if (!tag) return;
@@ -1719,7 +1745,7 @@ export async function getProductionPayload(): Promise<ProductionPayload> {
     const liveEvents = await eventsFromLiveApi(800);
     const outputEvents = collectLiveOutputEvents(liveEvents);
     if (outputEvents.length) {
-      dynamics = buildDynamicsFromOutputEvents(outputEvents);
+      dynamics = buildDynamicsFromOutputEvents(outputEvents, produced);
       const eventRate = rateFromOutputEvents(outputEvents);
       if (eventRate > 0 || ratePerMin <= 0) ratePerMin = eventRate;
     }

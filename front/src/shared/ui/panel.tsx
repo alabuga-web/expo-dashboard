@@ -1,5 +1,8 @@
+"use client";
+
 import { cn } from "@/shared/lib/cn";
 import type { ReactNode } from "react";
+import { LocaleText } from "@/features/locale-toggle/locale-context";
 
 interface PanelProps {
   title?: string;
@@ -34,11 +37,13 @@ export function Panel({
           <div className="min-w-0">
             {title && (
               <h3 className={cn("font-semibold text-foreground", compact ? "text-xs" : "text-base")}>
-                {title}
+                <LocaleText>{title}</LocaleText>
               </h3>
             )}
             {subtitle && (
-              <p className={cn("text-muted", compact ? "text-[10px]" : "mt-0.5 text-sm")}>{subtitle}</p>
+              <p className={cn("text-muted", compact ? "text-[10px]" : "mt-0.5 text-sm")}>
+                <LocaleText>{subtitle}</LocaleText>
+              </p>
             )}
           </div>
           {headerRight}
