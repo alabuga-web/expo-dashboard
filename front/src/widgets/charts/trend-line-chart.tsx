@@ -19,15 +19,27 @@ interface TrendLineChartProps {
   unit?: string;
   height?: number | string;
   compact?: boolean;
+  area?: boolean;
+  stack?: boolean;
+  step?: boolean;
 }
 
-export function TrendLineChart({ series, height = 260, compact = false }: TrendLineChartProps) {
+export function TrendLineChart({
+  series,
+  height = 260,
+  compact = false,
+  area = false,
+  stack = false,
+  step = false,
+}: TrendLineChartProps) {
   registerEchartsTheme();
   const fill = height === "100%";
 
   const option = useMemo(() => {
     const timestamps = series[0]?.data.map((d) => formatTime(d.timestamp)) ?? [];
     return {
+      animationDuration: 300,
+      animationDurationUpdate: 400,
       grid: compact
         ? { top: 28, right: 8, bottom: 20, left: 36 }
         : { top: 40, right: 16, bottom: 32, left: 48 },
@@ -45,22 +57,43 @@ export function TrendLineChart({ series, height = 260, compact = false }: TrendL
       },
       yAxis: {
         type: "value",
+        minInterval: 1,
         splitLine: { lineStyle: { color: colors.borderSubtle, type: "dashed" } },
       },
       tooltip: { trigger: "axis" },
-      series: series.map((s, i) => ({
-        name: s.name,
-        type: "line",
-        smooth: true,
-        symbol: "none",
-        lineStyle: { width: 2, color: s.color ?? chartColors.zones[i % chartColors.zones.length] },
-        data: s.data.map((d) => d.value),
-      })),
+      series: series.map((s, i) => {
+        const color = s.color ?? chartColors.zones[i % chartColors.zones.length];
+        return {
+          name: s.name,
+          type: "line",
+          smooth: !step,
+          step: step ? "end" : undefined,
+          stack: stack ? "total" : undefined,
+          symbol: "none",
+          lineStyle: { width: 2, color },
+          areaStyle: area
+            ? {
+                color: {
+                  type: "linear",
+                  x: 0,
+                  y: 0,
+                  x2: 0,
+                  y2: 1,
+                  colorStops: [
+                    { offset: 0, color: color + "66" },
+                    { offset: 1, color: color + "10" },
+                  ],
+                },
+              }
+            : undefined,
+          data: s.data.map((d) => d.value),
+        };
+      }),
     };
-  }, [series, compact]);
+  }, [series, compact, area, stack, step]);
 
   return (
-    <ChartContainer height={height} fill={fill} empty={!series.length}>
+    <ChartContainer height={height} fill={fill} empty={!series.some((s) => s.data.length)}>
       <ReactEChartsCore
         echarts={echarts}
         option={option}

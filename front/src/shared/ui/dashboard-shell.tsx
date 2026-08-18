@@ -5,11 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import { cn } from "@/shared/lib/cn";
-import { useLocale } from "@/features/locale-toggle/locale-context";
+import { LocaleText, useLocale } from "@/features/locale-toggle/locale-context";
 import { LiveClock } from "./live-clock";
 
 const navItems = [
   { href: "/production", label: { en: "Production", ru: "Производство" }, icon: "◫", match: "/production" },
+  { href: "/process", label: { en: "Processes", ru: "Процессы" }, icon: "⌁", match: "/process" },
 ];
 
 interface DashboardShellProps {
@@ -17,6 +18,47 @@ interface DashboardShellProps {
   breadcrumbs?: { label: string; href?: string }[];
   /** Без внутренней прокрутки — для kiosk / большого экрана */
   kiosk?: boolean;
+}
+
+
+function ResetTrackingButton() {
+  const { t } = useLocale();
+  const [busy, setBusy] = useState(false);
+
+  const onReset = async () => {
+    const ok = window.confirm(
+      t(
+        "Clear counters and charts to track from zero? Live OPC tags stay.",
+        "Сбросить счётчики и графики, чтобы вести учёт с нуля? Live OPC-теги сохранятся.",
+      ),
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/reset", { method: "POST", cache: "no-store" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Reset failed");
+      }
+      window.dispatchEvent(new Event("scenario-changed"));
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void onReset()}
+      disabled={busy}
+      className="h-8 rounded-md border border-border px-2 text-xs text-muted hover:border-[#F59E0B] hover:text-[#F59E0B] disabled:opacity-50"
+      title={t("Reset counters from zero", "Сброс счётчиков с нуля")}
+    >
+      {busy ? t("…", "…") : t("From zero", "С нуля")}
+    </button>
+  );
 }
 
 export function DashboardShell({ children, breadcrumbs, kiosk = false }: DashboardShellProps) {
@@ -56,7 +98,7 @@ export function DashboardShell({ children, breadcrumbs, kiosk = false }: Dashboa
                   : "w-0 opacity-0 group-hover/sidebar:w-auto group-hover/sidebar:opacity-100"
               )}
             >
-              {t("SEZ Alabuga", "ОЭЗ «Алабуга»")}
+              <LocaleText>{t("SEZ Alabuga", "ОЭЗ «Алабуга»")}</LocaleText>
             </span>
           </Link>
         </div>
@@ -85,7 +127,7 @@ export function DashboardShell({ children, breadcrumbs, kiosk = false }: Dashboa
                     sidebarOpen ? "opacity-100" : "opacity-0 group-hover/sidebar:opacity-100"
                   )}
                 >
-                  {t(item.label.en, item.label.ru)}
+                  <LocaleText>{t(item.label.en, item.label.ru)}</LocaleText>
                 </span>
               </Link>
             );
@@ -106,7 +148,9 @@ export function DashboardShell({ children, breadcrumbs, kiosk = false }: Dashboa
                         {crumb.label}
                       </Link>
                     ) : (
-                      <span className="truncate text-foreground">{crumb.label}</span>
+                      <span className="truncate text-foreground">
+                        <LocaleText>{crumb.label}</LocaleText>
+                      </span>
                     )}
                   </span>
                 ))}
@@ -114,6 +158,7 @@ export function DashboardShell({ children, breadcrumbs, kiosk = false }: Dashboa
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <ResetTrackingButton />
             <button
               onClick={toggleLocale}
               className="h-8 rounded-md border border-border px-2 text-xs text-muted hover:border-[color:color-mix(in_oklab,var(--accent)_55%,var(--border))] hover:text-foreground"

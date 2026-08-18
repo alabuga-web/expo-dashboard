@@ -18,11 +18,26 @@ interface KpiGaugeChartProps {
   value: number;
   label: string;
   height?: number;
+  min?: number;
+  max?: number;
+  unit?: string;
+  formatValue?: (value: number) => string;
+  color?: string;
 }
 
-export function KpiGaugeChart({ value, label, height = 200 }: KpiGaugeChartProps) {
+export function KpiGaugeChart({
+  value,
+  label,
+  height = 200,
+  min = 0,
+  max = 1,
+  unit,
+  formatValue,
+  color = colors.accent,
+}: KpiGaugeChartProps) {
   registerEchartsTheme();
   const compact = height <= 120;
+  const detailText = formatValue ? formatValue(value) : unit ? `${value.toFixed(2)} ${unit}` : formatPercent(value, 0);
 
   const option = useMemo(
     () => ({
@@ -31,8 +46,8 @@ export function KpiGaugeChart({ value, label, height = 200 }: KpiGaugeChartProps
           type: "gauge",
           startAngle: 200,
           endAngle: -20,
-          min: 0,
-          max: 1,
+          min,
+          max,
           splitNumber: 4,
           radius: compact ? "82%" : "90%",
           pointer: { show: false },
@@ -47,7 +62,7 @@ export function KpiGaugeChart({ value, label, height = 200 }: KpiGaugeChartProps
                 x: 0, y: 0, x2: 1, y2: 0,
                 colorStops: [
                   { offset: 0, color: colors.accentMuted },
-                  { offset: 1, color: colors.accent },
+                  { offset: 1, color },
                 ],
               },
             },
@@ -66,13 +81,13 @@ export function KpiGaugeChart({ value, label, height = 200 }: KpiGaugeChartProps
             fontWeight: 700,
             color: colors.text,
             offsetCenter: [0, compact ? "5%" : "10%"],
-            formatter: () => formatPercent(value, 0),
+            formatter: () => detailText,
           },
           data: [{ value }],
         },
       ],
     }),
-    [value, compact]
+    [value, min, max, compact, detailText, color]
   );
 
   return (
